@@ -103,11 +103,13 @@ export const ComfyService = {
     ).filter(p => p.length > 0);
 
     const fullPrompt = [prompt, ...traitPrompts].join(', ');
+      // Create a unique timestamp
+    const timestamp = Math.floor(Date.now()/1000);
     
     console.log("Creating workflow with prompt:", fullPrompt);
 
     // Fixed workflow to include VAEDecode before SaveImage
-    return {
+   const workflow={
       "3": {
         "inputs": {
           "seed": Math.floor(Math.random() * 1000000),
@@ -160,13 +162,19 @@ export const ComfyService = {
       },
       "9": {
         "inputs": {
-          "filename_prefix": `postapoc_vehicle_${Math.floor(Date.now()/1000)}`,
+          "filename_prefix": `postapoc_vehicle_${timestamp}`,
           "images": ["8", 0]  // Now correctly points to VAEDecode output
         },
         "class_type": "SaveImage"
       }
+
     };
+      // Return the workflow AND the timestamp we used
+      return{ workflow, timestamp };
+
   }
+
+
 };
 
 export default ComfyService;

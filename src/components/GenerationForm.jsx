@@ -142,6 +142,8 @@ const GenerationForm = () => {
     e.preventDefault();
     setIsGenerating(true);
     setStatus({ message: '', error: false });
+
+ 
   
     try {
       // Create a session first
@@ -156,14 +158,17 @@ const GenerationForm = () => {
       // Create and queue the workflow
       setStatus({ message: 'Creating workflow...', error: false });
       console.log("Creating workflow with prompt:", prompt, "and traits:", selectedTraits);
-      const workflow = ComfyService.createVehicleWorkflow(prompt, selectedTraits);
-      console.log("Workflow created:", workflow);
-      
+      const { workflow, timestamp } = ComfyService.createVehicleWorkflow(prompt, selectedTraits);
+      console.log("Workflow created with timestamp:", timestamp);
+
+      // Store the timestamp for later use
+      const generationTimestamp = timestamp;
+      // setGenerationTimestamp(timestamp); // If using state
+
       // Queue the prompt in ComfyUI
       setStatus({ message: 'Queuing generation...', error: false });
       console.log("Submitting workflow to ComfyUI...");
       const promptResponse = await ComfyService.queuePrompt(workflow);
-      console.log("ComfyUI response:", promptResponse);
       
       // Poll for completion
       setStatus({ message: 'Generation in progress...', error: false });
@@ -177,42 +182,24 @@ const GenerationForm = () => {
           // Get the status of the specific prompt execution
           const result = await ComfyService.getOutput(promptResponse.prompt_id);
           console.log("ComfyUI status check result:", result);
-          
+
           // Look for output images in the result
           let outputImage = null;
           let isComplete = false;
-          
-          // Check if the generation is complete by looking for output in node 9 (SaveImage)
-          if (result && result.output && result.output["9"] && result.output["9"].length > 0) {
-            // This gives us the exact filename from the ComfyUI output
-            outputImage = result.output["9"][0];
-            isComplete = true;
-            console.log("Found output image:", outputImage);
-          }
-          
-          if (isComplete && outputImage) {
-            console.log("Generation complete, processing output...");
-            
-            // Get the image file using the exact filename from ComfyUI's output
-            const filename = outputImage.filename;
-            const imageUrl = `http://localhost:8188/view?filename=${encodeURIComponent(filename)}`;
-          
 
-            
-         
-          
-          // If we still haven't found the output, try a direct fetch to a common output path
+         // THis metod works
           if (!isComplete) {
-            console.log("Trying direct file check...");
-            
-            // Try a few possible filenames based on the prefix in your workflow
-            const possibleFilenames = [
-              "postapoc_vehicle.png",
-              `postapoc_vehicle_${Math.floor(Date.now() / 1000)}.png`,
-              "postapoc_vehicle_00001_.png"
+            console.log("Trying to find file with timestamp:", generationTimestamp);
+
+            // Try a few possible filename patterns
+            const timeBasedFilenames = [
+              // `postapoc_vehicle_${generationTimestamp}.png`,
+              // `postapoc_vehicle_${generationTimestamp}_00001.png`,
+              `postapoc_vehicle_${generationTimestamp}_00001_.png`
             ];
-            
-            for (const filename of possibleFilenames) {
+
+
+            for (const filename of timeBasedFilenames) {
               try {
                 const testUrl = `http://localhost:8188/view?filename=${encodeURIComponent(filename)}`;
                 console.log("Testing URL:", testUrl);
@@ -228,33 +215,54 @@ const GenerationForm = () => {
               } catch (e) {
                 console.log("Error checking filename:", filename, e);
               }
-            }
+            }}
+
+
+
+
+
+
+          
+
+          
+
             
-            // As a last resort, get the file listing from the output directory
-            if (!isComplete) {
-              try {
-                const filelistResponse = await fetch("http://localhost:8188/history/files");
-                if (filelistResponse.ok) {
-                  const files = await filelistResponse.json();
-                  console.log("Available files:", files);
-                  
-                  // Look for any recent files with our prefix
-                  const matchingFiles = files.filter(f => 
-                    f.startsWith("postapoc_vehicle") && 
-                    f.endsWith(".png")
-                  ).sort().reverse(); // Get most recent first
-                  
-                  if (matchingFiles.length > 0) {
-                    outputImage = { filename: matchingFiles[0] };
-                    isComplete = true;
-                    console.log("Found latest matching file:", matchingFiles[0]);
-                  }
-                }
-              } catch (e) {
-                console.log("Error getting file listing:", e);
-              }
-            }
-          }
+         
+          // This is a back up method that also works. 
+          
+          // // If we still haven't found the output, try a direct fetch to a common output path
+          // if (!isComplete) {
+          //   console.log("Trying direct file check...");
+            
+          //   // Try a few possible filenames based on the prefix in your workflow
+          //   const possibleFilenames = [
+          //     // "postapoc_vehicle.png",
+          //     // `postapoc_vehicle_${Math.floor(Date.now() / 1000)}.png`,
+          //     `postapoc_vehicle_${generationTimestamp}_00001_.png`
+          //     // "postapoc_vehicle_00005_.png"
+          //   ];
+            
+          //   for (const filename of possibleFilenames) {
+          //     try {
+          //       const testUrl = `http://localhost:8188/view?filename=${encodeURIComponent(filename)}`;
+          //       console.log("Testing URL:", testUrl);
+                
+          //       const testResponse = await fetch(testUrl, { method: 'HEAD' });
+                
+          //       if (testResponse.ok) {
+          //         console.log("Found image at:", filename);
+          //         outputImage = { filename };
+          //         isComplete = true;
+          //         break;
+          //       }
+          //     } catch (e) {
+          //       console.log("Error checking filename:", filename, e);
+          //     }
+          //   }}
+            
+
+
+
           
           if (isComplete && outputImage) {
             console.log("Generation complete, processing output:", outputImage);
