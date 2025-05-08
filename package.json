@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "util": "src/utils/comfy-diagnostic"
   },
   "dependencies": {
     "@react-three/drei": "^10.0.7",

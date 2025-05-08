@@ -13,6 +13,8 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 console.log("Supabase connection check:", 
   supabase.auth.getSession().then(res => console.log("Session:", res))
 );
+// Add this line to export the supabase instance
+export { supabase };
 
 export const SupabaseService = {
   /**

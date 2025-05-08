@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import ComfyService from '../services/comfyService';
 import SupabaseService from '../services/supabaseService';
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from "../services/supabaseService";
+
 
 const FormContainer = styled.div`
   background-color: #fff;
@@ -169,12 +170,11 @@ const GenerationForm = () => {
       
       // Wait for the generation to complete and get output
       // In a real app, you'd use WebSockets - we'll poll for simplicity
-      // Replace the checkCompletion function with this improved version
       const checkCompletion = async () => {
         try {
           console.log("Checking generation status for prompt ID:", promptResponse.prompt_id);
           
-          // Get the current status of the generation
+          // Get the status of the specific prompt execution
           const result = await ComfyService.getOutput(promptResponse.prompt_id);
           console.log("ComfyUI status check result:", result);
           
@@ -184,6 +184,7 @@ const GenerationForm = () => {
           
           // Check if the generation is complete by looking for output in node 9 (SaveImage)
           if (result && result.output && result.output["9"] && result.output["9"].length > 0) {
+            // This gives us the exact filename from the ComfyUI output
             outputImage = result.output["9"][0];
             isComplete = true;
             console.log("Found output image:", outputImage);
@@ -191,6 +192,72 @@ const GenerationForm = () => {
           
           if (isComplete && outputImage) {
             console.log("Generation complete, processing output...");
+            
+            // Get the image file using the exact filename from ComfyUI's output
+            const filename = outputImage.filename;
+            const imageUrl = `http://localhost:8188/view?filename=${encodeURIComponent(filename)}`;
+          
+
+            
+         
+          
+          // If we still haven't found the output, try a direct fetch to a common output path
+          if (!isComplete) {
+            console.log("Trying direct file check...");
+            
+            // Try a few possible filenames based on the prefix in your workflow
+            const possibleFilenames = [
+              "postapoc_vehicle.png",
+              `postapoc_vehicle_${Math.floor(Date.now() / 1000)}.png`,
+              "postapoc_vehicle_00001_.png"
+            ];
+            
+            for (const filename of possibleFilenames) {
+              try {
+                const testUrl = `http://localhost:8188/view?filename=${encodeURIComponent(filename)}`;
+                console.log("Testing URL:", testUrl);
+                
+                const testResponse = await fetch(testUrl, { method: 'HEAD' });
+                
+                if (testResponse.ok) {
+                  console.log("Found image at:", filename);
+                  outputImage = { filename };
+                  isComplete = true;
+                  break;
+                }
+              } catch (e) {
+                console.log("Error checking filename:", filename, e);
+              }
+            }
+            
+            // As a last resort, get the file listing from the output directory
+            if (!isComplete) {
+              try {
+                const filelistResponse = await fetch("http://localhost:8188/history/files");
+                if (filelistResponse.ok) {
+                  const files = await filelistResponse.json();
+                  console.log("Available files:", files);
+                  
+                  // Look for any recent files with our prefix
+                  const matchingFiles = files.filter(f => 
+                    f.startsWith("postapoc_vehicle") && 
+                    f.endsWith(".png")
+                  ).sort().reverse(); // Get most recent first
+                  
+                  if (matchingFiles.length > 0) {
+                    outputImage = { filename: matchingFiles[0] };
+                    isComplete = true;
+                    console.log("Found latest matching file:", matchingFiles[0]);
+                  }
+                }
+              } catch (e) {
+                console.log("Error getting file listing:", e);
+              }
+            }
+          }
+          
+          if (isComplete && outputImage) {
+            console.log("Generation complete, processing output:", outputImage);
             
             // Get the image file
             const filename = outputImage.filename;
@@ -206,18 +273,18 @@ const GenerationForm = () => {
             const imageBlob = await imageResponse.blob();
             
             // Upload to Supabase storage
-            const storagePath = `generated-images/${session.id}/${filename}`;
+            const storagePath = `${session.id}/${filename}`;
             console.log("Uploading to Supabase storage:", storagePath);
             
             // Make sure the bucket exists
             try {
               // Check if the bucket exists first
               const { data: buckets } = await supabase.storage.listBuckets();
-              const bucketExists = buckets.some(b => b.name === 'generated-images');
+              const bucketExists = buckets.some(b => b.name === 'images-2d');
               
               if (!bucketExists) {
-                console.log("Creating storage bucket 'generated-images'");
-                await supabase.storage.createBucket('generated-images', {
+                console.log("Creating storage bucket 'images-2d'");
+                await supabase.storage.createBucket('images-2d', {
                   public: false,
                   allowedMimeTypes: ['image/png'],
                   fileSizeLimit: 10485760 // 10MB
@@ -230,7 +297,7 @@ const GenerationForm = () => {
             
             const { data: uploadData, error: uploadError } = await supabase
               .storage
-              .from('generated-images')
+              .from('images-2d')
               .upload(storagePath, imageBlob);
               
             if (uploadError) {
@@ -244,7 +311,7 @@ const GenerationForm = () => {
               .insert([
                 {
                   asset_type: 'image_2d',
-                  storage_path: storagePath,
+                  storage_path: `images-2d/${storagePath}`, // Make sure path includes bucket name
                   parent_asset_id: null, // This is an original generation
                   status: 'complete',
                   metadata: {
@@ -256,17 +323,18 @@ const GenerationForm = () => {
                   }
                 }
               ])
-              .select()
-              .single();
+              .select();
               
             if (assetError) {
               throw new Error(`Failed to create asset record: ${assetError.message}`);
             }
             
+            console.log("Asset created:", assetData);
+            
             // Link asset to traits if any were selected
-            if (selectedTraits.length > 0) {
+            if (selectedTraits.length > 0 && assetData && assetData.length > 0) {
               const traitLinks = selectedTraits.map(trait => ({
-                asset_id: assetData.id,
+                asset_id: assetData[0].id,
                 trait_id: trait.id
               }));
               
@@ -280,18 +348,20 @@ const GenerationForm = () => {
             }
             
             // Link asset to session
-            console.log("Linking asset to session");
-            const { error: sessionLinkError } = await supabase
-              .from('session_assets')
-              .insert([
-                {
-                  session_id: session.id,
-                  asset_id: assetData.id
-                }
-              ]);
-              
-            if (sessionLinkError) {
-              console.error("Failed to link asset to session:", sessionLinkError);
+            if (assetData && assetData.length > 0) {
+              console.log("Linking asset to session");
+              const { error: sessionLinkError } = await supabase
+                .from('session_assets')
+                .insert([
+                  {
+                    session_id: session.id,
+                    asset_id: assetData[0].id
+                  }
+                ]);
+                
+              if (sessionLinkError) {
+                console.error("Failed to link asset to session:", sessionLinkError);
+              }
             }
             
             // Update session status
@@ -313,8 +383,24 @@ const GenerationForm = () => {
             return;
           }
           
-          // If we reach here, the generation is not complete yet
-          console.log("Generation not yet complete, polling again in 2 seconds...");
+          // Count polling attempts to avoid infinite loop
+          if (!window.pollingAttempts) window.pollingAttempts = 0;
+          window.pollingAttempts++;
+          
+          if (window.pollingAttempts > 15) { // 30 seconds max
+            console.log("Maximum polling attempts reached, giving up");
+            setStatus({ 
+              message: 'Generation may have completed, but we could not process the results. Check the assets page or try again.', 
+              error: true 
+            });
+            setIsGenerating(false);
+            window.pollingAttempts = 0;
+            return;
+          }
+          
+          // If we reach here, the generation is not complete yet or we couldn't find the output
+          console.log("Generation not yet complete or output not found, polling again in 2 seconds...");
+          console.log("Polling attempt:", window.pollingAttempts);
           setTimeout(checkCompletion, 2000);
           
         } catch (error) {

@@ -1,7 +1,7 @@
 // src/components/VehicleGenerator.jsx
 import React, { useState, useEffect } from 'react';
 import { useComfyUI } from '../hooks/useComfyUI';
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from "../services/supabaseService";
 import ProgressBar from './ProgressBar';
 import ErrorDisplay from './ErrorDisplay';
 import { getVehicleWorkflow } from '../workflows/vehicleWorkflow';
@@ -119,7 +119,7 @@ const VehicleGenerator = ({ onSuccess }) => {
           
           const { data: storageData, error: storageError } = await supabase
             .storage
-            .from('generated-images')
+            .from('images-2d')
             .upload(filename, blob);
           
           if (storageError) {

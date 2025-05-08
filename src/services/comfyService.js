@@ -160,7 +160,7 @@ export const ComfyService = {
       },
       "9": {
         "inputs": {
-          "filename_prefix": "postapoc_vehicle",
+          "filename_prefix": `postapoc_vehicle_${Math.floor(Date.now()/1000)}`,
           "images": ["8", 0]  // Now correctly points to VAEDecode output
         },
         "class_type": "SaveImage"
@@ -170,3 +170,4 @@ export const ComfyService = {
 };
 
 export default ComfyService;
+
