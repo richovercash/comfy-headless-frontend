@@ -7,6 +7,16 @@ import AssetDetailPage from './pages/AssetDetailPage';
 import GenerationPage from './pages/GenerationPage';
 import SessionsPage from './pages/SessionsPage';
 
+// Add this near the top of your main JS file
+window.addEventListener('error', function(event) {
+  console.error('Global error:', event.error);
+});
+
+// Also, add this to catch unhandled promise rejections
+window.addEventListener('unhandledrejection', function(event) {
+  console.error('Unhandled promise rejection:', event.reason);
+});
+
 const AppContainer = styled.div`
   min-height: 100vh;
   display: flex;

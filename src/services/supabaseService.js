@@ -6,6 +6,14 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+// console.log("ComfyUI API URL:", process.env.REACT_APP_COMFYUI_API_URL);
+// console.log("ComfyUI WS URL:", process.env.REACT_APP_COMFYUI_WS_URL);
+
+// Add near the top of your component or in a useEffect
+console.log("Supabase connection check:", 
+  supabase.auth.getSession().then(res => console.log("Session:", res))
+);
+
 export const SupabaseService = {
   /**
    * Get all assets with optional filtering
@@ -125,24 +133,35 @@ export const SupabaseService = {
    * Create a new generation session
    * @param {Object} parameters - Session parameters
    */
-  async createSession(parameters = {}) {
-    const { data, error } = await supabase
-      .from('generation_sessions')
-      .insert({
-        parameters,
-        status: 'initiated'
-      })
-      .select()
-      .single();
 
-    if (error) {
-      console.error('Error creating session:', error);
-      throw error;
+
+  async createSession(parameters = {}) {
+    try {
+      const { data, error } = await supabase
+        .from('generation_sessions')
+        .insert({
+          parameters,
+          status: 'initiated'
+        })
+        .select()
+        .single();
+  
+      if (error) {
+        console.error('Error creating session:', error);
+        // Log detailed error information
+        console.error('Error code:', error.code);
+        console.error('Error message:', error.message);
+        console.error('Error details:', error.details);
+        throw error;
+      }
+  
+      return data;
+    } catch (err) {
+      console.error('Exception in createSession:', err);
+      throw err;
     }
 
-    return data;
-  },
-
+  },  
   /**
    * Get all traits, optionally filtered by type
    * @param {string} traitType - Optional trait type to filter by

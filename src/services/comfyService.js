@@ -1,7 +1,12 @@
 // src/services/comfyService.js
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188/api';
+
+// Remove the /api suffix
+const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
+
+console.log("API URL:", API_BASE_URL)
+
 
 export const ComfyService = {
   /**
@@ -9,23 +14,10 @@ export const ComfyService = {
    */
   async getStatus() {
     try {
-      const response = await axios.get(`${API_BASE_URL}/status`);
+      const response = await axios.get(`${API_BASE_URL}/system_stats`);
       return response.data;
     } catch (error) {
       console.error('Error getting ComfyUI status:', error);
-      throw error;
-    }
-  },
-
-  /**
-   * Get a list of available workflows
-   */
-  async getWorkflows() {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/workflows`);
-      return response.data;
-    } catch (error) {
-      console.error('Error getting workflows:', error);
       throw error;
     }
   },
@@ -36,37 +28,19 @@ export const ComfyService = {
    */
   async queuePrompt(workflow) {
     try {
-      const response = await axios.post(`${API_BASE_URL}/prompt`, workflow);
+      // Wrap the workflow in the expected format
+      const payload = {
+        prompt: workflow,
+        client_id: "generator-" + Date.now()
+      };
+      
+      console.log("Sending workflow to ComfyUI:", payload);
+      
+      const response = await axios.post(`${API_BASE_URL}/prompt`, payload);
       return response.data;
     } catch (error) {
       console.error('Error queuing prompt:', error);
-      throw error;
-    }
-  },
-
-  /**
-   * Get the queue status for a specific prompt ID
-   * @param {string} promptId - The prompt ID to check
-   */
-  async getPromptStatus(promptId) {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/prompt/${promptId}`);
-      return response.data;
-    } catch (error) {
-      console.error('Error getting prompt status:', error);
-      throw error;
-    }
-  },
-
-  /**
-   * Get a list of available ComfyUI nodes
-   */
-  async getNodeDefs() {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/object_info`);
-      return response.data;
-    } catch (error) {
-      console.error('Error getting node definitions:', error);
+      console.error('Error details:', error.response?.data || error.message);
       throw error;
     }
   },
@@ -81,6 +55,25 @@ export const ComfyService = {
     } catch (error) {
       console.error('Error getting history:', error);
       throw error;
+    }
+  },
+
+    // Add this to your ComfyService
+  async getAvailableModels() {
+    try {
+      // This endpoint might be different depending on your ComfyUI version
+      const response = await axios.get(`${API_BASE_URL}/object_info`);
+      const data = response.data;
+      
+      // Extract available models from the response
+      if (data && data.CheckpointLoaderSimple && data.CheckpointLoaderSimple.input.required.ckpt_name) {
+        return data.CheckpointLoaderSimple.input.required.ckpt_name.options;
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Error getting available models:', error);
+      return [];
     }
   },
 
@@ -110,8 +103,10 @@ export const ComfyService = {
     ).filter(p => p.length > 0);
 
     const fullPrompt = [prompt, ...traitPrompts].join(', ');
+    
+    console.log("Creating workflow with prompt:", fullPrompt);
 
-    // This is a simplified example workflow - adjust based on your actual ComfyUI setup
+    // Fixed workflow to include VAEDecode before SaveImage
     return {
       "3": {
         "inputs": {
@@ -130,7 +125,7 @@ export const ComfyService = {
       },
       "4": {
         "inputs": {
-          "ckpt_name": "sd_xl_base_1.0.safetensors"
+          "ckpt_name": "sdxl/sd_xl_base_1.0.safetensors"
         },
         "class_type": "CheckpointLoaderSimple"
       },
@@ -166,7 +161,7 @@ export const ComfyService = {
       "9": {
         "inputs": {
           "filename_prefix": "postapoc_vehicle",
-          "images": ["8", 0]
+          "images": ["8", 0]  // Now correctly points to VAEDecode output
         },
         "class_type": "SaveImage"
       }
