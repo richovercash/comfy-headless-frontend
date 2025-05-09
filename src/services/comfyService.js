@@ -1,8 +1,6 @@
 // src/services/comfyService.js
 import axios from 'axios';
-// Import with explicit named import
-import { createFluxSimplifiedWorkflow } from '../workflows/fluxSimplified';
-import { validateWorkflow, convertEditorWorkflowToAPIFormat } from '../utils/workflowConverter';
+import { createDirectFluxWorkflow } from '../workflows/directFluxWorkflow';
 
 // API base URL
 export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
@@ -29,15 +27,7 @@ export const ComfyService = {
    */
   async queuePrompt(workflow) {
     try {
-      console.log("Preparing workflow for ComfyUI submission...");
-      
-      // Step 1: Validate the workflow
-      const { isValid, errors } = validateWorkflow(workflow);
-      if (!isValid) {
-        const errorMsg = `Invalid workflow: ${errors.join(', ')}`;
-        console.error(errorMsg);
-        throw new Error(errorMsg);
-      }
+      console.log("Queueing workflow:", workflow);
       
       // Format expected by ComfyUI API
       const payload = {
@@ -45,7 +35,7 @@ export const ComfyService = {
         client_id: "generator-" + Date.now()
       };
       
-      console.log("Sending payload to ComfyUI:", JSON.stringify(payload).substring(0, 200) + "...");
+      console.log("Sending payload:", JSON.stringify(payload).substring(0, 200) + "...");
       
       // Use fetch for better error handling
       const response = await fetch(`${API_BASE_URL}/prompt`, {
@@ -85,58 +75,6 @@ export const ComfyService = {
   },
 
   /**
-   * Get the available node types and their configurations from ComfyUI
-   * This is useful for diagnosing compatibility issues
-   */
-  async getNodeTypes() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/object_info`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch node types: ${response.status}`);
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error("Error fetching node types:", error);
-      throw error;
-    }
-  },
-
-  /**
-   * Test connection with a very simple connection verification
-   * Doesn't try to execute a workflow, just checks if the API is available
-   */
-  async checkConnectionOnly() {
-    try {
-      // Just do a simple system stats request to check connectivity
-      const response = await fetch(`${API_BASE_URL}/system_stats`);
-      const isConnected = response.ok;
-      let data = null;
-      
-      try {
-        if (isConnected) {
-          data = await response.json();
-        }
-      } catch (e) {
-        console.warn("Could not parse system stats response:", e);
-      }
-      
-      return {
-        success: isConnected,
-        data,
-        error: isConnected ? null : new Error(`Failed to connect: ${response.status}`)
-      };
-    } catch (error) {
-      console.error("Connection check failed:", error);
-      return {
-        success: false,
-        data: null,
-        error
-      };
-    }
-  },
-
-  /**
    * Get the output of a specific execution
    * @param {string} promptId - The prompt ID to get output for
    */
@@ -151,59 +89,56 @@ export const ComfyService = {
   },
 
   /**
+   * Get available models from ComfyUI
+   */
+  async getAvailableModels() {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/object_info`);
+      const data = response.data;
+      
+      if (data && data.CheckpointLoaderSimple && data.CheckpointLoaderSimple.input.required.ckpt_name) {
+        return data.CheckpointLoaderSimple.input.required.ckpt_name.options;
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Error getting available models:', error);
+      return [];
+    }
+  },
+
+  /**
    * Create a Flux workflow with the provided options
-   * Uses our simplified, robust workflow
+   * Uses the original workflow with minimal changes
    */
   createFluxWorkflow(options) {
-    return createFluxSimplifiedWorkflow(options);
+    return createDirectFluxWorkflow(options);
   },
 
   /**
    * Test connection to ComfyUI
-   * Only checks if the API is reachable, doesn't try to execute any workflows
+   * Uses a very simple workflow to verify connectivity
    */
   async testConnection() {
     try {
       console.log("Testing connection to ComfyUI at:", API_BASE_URL);
       
-      // Simply check if we can connect to the API
-      const result = await this.checkConnectionOnly();
-      
-      if (result.success) {
-        console.log("Connection to ComfyUI successful!");
+      // Just do a simple API check
+      const statsResponse = await fetch(`${API_BASE_URL}/system_stats`);
+      if (!statsResponse.ok) {
         return {
-          success: true, 
-          message: "Connected to ComfyUI successfully",
-          data: result.data
-        };
-      } else {
-        console.error("Failed to connect to ComfyUI:", result.error);
-        return {
-          success: false,
-          error: result.error
+          success: false, 
+          error: new Error(`System stats request failed with status: ${statsResponse.status}`)
         };
       }
+      
+      return {
+        success: true, 
+        message: "Connected to ComfyUI API successfully"
+      };
     } catch (error) {
       console.error("Connection test failed:", error);
-      return {
-        success: false, 
-        error: error
-      };
-    }
-  },
-  
-  /**
-   * Process a workflow JSON from the ComfyUI editor
-   * Converts it to the format expected by the ComfyUI API
-   * @param {Object} editorWorkflow - The workflow from ComfyUI editor
-   * @returns {Object} - Processed workflow ready for the API
-   */
-  processEditorWorkflow(editorWorkflow) {
-    try {
-      return convertEditorWorkflowToAPIFormat(editorWorkflow);
-    } catch (error) {
-      console.error("Error processing editor workflow:", error);
-      throw error;
+      return {success: false, error};
     }
   }
 };
