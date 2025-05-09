@@ -7,10 +7,9 @@ import { fluxNodes } from '../workflows/flux-config';
 import deepClone from 'lodash/cloneDeep';
 
 
-// Remove the /api suffix
-const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
+export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
 
-console.log("API URL:", API_BASE_URL)
+console.log("API URL:", API_BASE_URL);
 
 
 export const ComfyService = {
@@ -378,9 +377,25 @@ export const ComfyService = {
     return { workflow, timestamp };
   },
 
-    // Add this to your ComfyService
+    // In src/services/comfyService.js
+
+  // Add this method to your ComfyService object
   async testConnection() {
     try {
+      // Use API_BASE_URL directly, not this.baseUrl
+      const baseUrl = API_BASE_URL; // This is defined at the top of your file
+      console.log("Testing connection to ComfyUI at:", baseUrl);
+      
+      // First try a simple system_stats request
+      const statsResponse = await fetch(`${baseUrl}/system_stats`);
+      if (!statsResponse.ok) {
+        console.error(`System stats request failed with status: ${statsResponse.status}`);
+        return {
+          success: false, 
+          error: new Error(`System stats request failed with status: ${statsResponse.status}`)
+        };
+      }
+      
       // Test with a simple valid workflow
       const testWorkflow = {
         "1": {
@@ -413,7 +428,28 @@ export const ComfyService = {
         }
       };
       
-      const result = await this.queuePrompt(testWorkflow);
+      const payload = {
+        prompt: testWorkflow,
+        client_id: "test-" + Date.now()
+      };
+      
+      console.log("Sending payload:", JSON.stringify(payload).substring(0, 100) + "...");
+      
+      const response = await fetch(`${baseUrl}/prompt`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Server error response:", errorText);
+        return {success: false, error: new Error(`Failed to queue prompt: ${response.status} - ${errorText}`)};
+      }
+      
+      const result = await response.json();
       console.log("Connection test successful!", result);
       return {success: true, result};
     } catch (error) {

@@ -5,6 +5,8 @@ import { useEffect } from 'react';
 import ComfyService from '../services/comfyService';
 import SupabaseService from '../services/supabaseService';
 
+export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
+
 const FluxGenerationForm = () => {
   const [values, setValues] = useState({
     prompt: 'neon-mist, cpstyle, rock!, Gatling_mounted, madocalypse',
@@ -208,9 +210,13 @@ return (
       <h3>Troubleshooting</h3>
       <Button 
         type="button"
+        className="secondary"
         onClick={async () => {
           setStatus({ message: 'Testing connection...', error: false });
           try {
+            console.log("Testing connection to ComfyUI...");
+            console.log("ComfyService API URL:", API_BASE_URL); // Make sure this is exported
+            
             // Check if ComfyService exists and has the method
             if (!ComfyService) {
               console.error("ComfyService is undefined");
@@ -243,17 +249,19 @@ return (
             });
           }
         }}
-        secondary
+        
       >
         Test ComfyUI Connection
       </Button>
     </TroubleshootingSection>
     
-    {status.message && (
-      <StatusMessage visible={!!status.message} error={status.error}>
-        {status.message}
-      </StatusMessage>
-    )}
+    // And when using the component
+    <StatusMessage 
+      visible={status.message ? "true" : "false"} 
+      error={status.error ? "true" : "false"}
+    >
+      {status.message}
+    </StatusMessage>
   </FormContainer>
 );
 };
@@ -329,8 +337,9 @@ const PreviewImage = styled.img`
   display: block;
 `;
 
+// Modified Button component without using a secondary prop
 const Button = styled.button`
-  background-color: ${props => props.secondary ? '#6c757d' : '#007bff'};
+  background-color: #007bff; /* Primary color */
   color: white;
   border: none;
   border-radius: 4px;
@@ -340,22 +349,31 @@ const Button = styled.button`
   transition: background-color 0.2s ease;
 
   &:hover {
-    background-color: ${props => props.secondary ? '#5a6268' : '#0069d9'};
+    background-color: #0069d9;
   }
 
   &:disabled {
     background-color: #cccccc;
     cursor: not-allowed;
   }
+  
+  &.secondary {
+    background-color: #6c757d;
+    
+    &:hover {
+      background-color: #5a6268;
+    }
+  }
 `;
 
+// In your styled components section
 const StatusMessage = styled.div`
   padding: 12px;
   margin-top: 16px;
   border-radius: 4px;
-  background-color: ${props => props.error ? '#ffebee' : '#e8f5e9'};
-  color: ${props => props.error ? '#c62828' : '#2e7d32'};
-  display: ${props => props.visible ? 'block' : 'none'};
+  background-color: ${props => props.error === "true" ? '#ffebee' : '#e8f5e9'};
+  color: ${props => props.error === "true" ? '#c62828' : '#2e7d32'};
+  display: ${props => props.visible === "true" ? 'block' : 'none'};
 `;
 
 // Add the missing TroubleshootingSection component
