@@ -4,6 +4,7 @@ import styled from 'styled-components';
 import ComfyService from '../services/comfyService';
 import SupabaseService from '../services/supabaseService';
 import ComfyUITroubleshooter from './ComfyUITroubleshooter';
+// import WorkflowLogger from '../utils/workflowLogger';
 
 export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
 
@@ -28,6 +29,8 @@ const FluxGenerationForm = () => {
     e.preventDefault();
     setIsGenerating(true);
     setStatus({ message: 'Starting generation...', error: false });
+    // Log workflow details before submission
+    // WorkflowLogger.logWorkflowSummary(workflow, 'Submission Workflow');
 
     try {
       // Create a session for tracking

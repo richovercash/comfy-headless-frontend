@@ -172,7 +172,7 @@ export const SupabaseService = {
       
       // Skip bucket creation - buckets should be created manually in Supabase dashboard
       
-      const { data, error } = await supabase.storage
+      const { error } = await supabase.storage
         .from(bucket)
         .upload(path, file);
         
@@ -252,6 +252,90 @@ export const SupabaseService = {
     }
     
     return data.signedUrl;
+  },
+
+  /**
+   * Create a new asset record in the database
+   * @param {Object} assetData - Asset data to insert
+   * @returns {Promise<Object>} - The created asset
+   */
+  async createAsset(assetData) {
+    try {
+      console.log("Creating asset with data:", assetData);
+      
+      const { data, error } = await supabase
+        .from('assets')
+        .insert(assetData)
+        .select()
+        .single();
+        
+      if (error) {
+        console.error("Error creating asset:", error);
+        throw error;
+      }
+      
+      console.log("Asset created successfully:", data);
+      return data;
+    } catch (error) {
+      console.error("Exception in createAsset:", error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Link an asset to a session
+   * @param {string} sessionId - The session ID
+   * @param {string} assetId - The asset ID
+   * @returns {Promise<void>}
+   */
+  async linkAssetToSession(sessionId, assetId) {
+    try {
+      console.log(`Linking asset ${assetId} to session ${sessionId}`);
+      
+      const { error } = await supabase
+        .from('session_assets')
+        .insert({
+          session_id: sessionId,
+          asset_id: assetId
+        });
+        
+      if (error) {
+        console.error("Error linking asset to session:", error);
+        throw error;
+      }
+      
+      console.log("Asset linked to session successfully");
+    } catch (error) {
+      console.error("Exception in linkAssetToSession:", error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Update the status of a session
+   * @param {string} sessionId - The session ID
+   * @param {string} status - The new status
+   * @returns {Promise<void>}
+   */
+  async updateSessionStatus(sessionId, status) {
+    try {
+      console.log(`Updating session ${sessionId} status to ${status}`);
+      
+      const { error } = await supabase
+        .from('generation_sessions')
+        .update({ status })
+        .eq('id', sessionId);
+        
+      if (error) {
+        console.error("Error updating session status:", error);
+        throw error;
+      }
+      
+      console.log("Session status updated successfully");
+    } catch (error) {
+      console.error("Exception in updateSessionStatus:", error);
+      throw error;
+    }
   }
 };
 

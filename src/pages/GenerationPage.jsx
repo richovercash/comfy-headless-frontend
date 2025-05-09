@@ -1,7 +1,8 @@
 // src/pages/GenerationPage.jsx
-import React from 'react';
+import React, { useState } from 'react';
 import styled from 'styled-components';
 import FluxGenerationForm from '../components/FluxGenerationForm';
+import DynamicWorkflowForm from '../components/DynamicWorkflowForm';
 import { Link } from 'react-router-dom';
 
 const PageContainer = styled.div`
@@ -22,21 +23,68 @@ const InfoSection = styled.div`
   border-radius: 8px;
 `;
 
+const TabContainer = styled.div`
+  display: flex;
+  border-bottom: 1px solid #ddd;
+  margin-bottom: 20px;
+`;
+
+const Tab = styled.button`
+  padding: 10px 20px;
+  background-color: ${props => props.active ? '#007bff' : '#f8f9fa'};
+  color: ${props => props.active ? 'white' : '#333'};
+  border: 1px solid #ddd;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  margin-right: 5px;
+  cursor: pointer;
+  font-weight: ${props => props.active ? 'bold' : 'normal'};
+  
+  &:hover {
+    background-color: ${props => props.active ? '#007bff' : '#e9ecef'};
+  }
+`;
+
 const GenerationPage = () => {
+  const [activeTab, setActiveTab] = useState('flux');
+  
   return (
     <PageContainer>
       <PageHeader>
         <h1>Generate New Vehicle</h1>
-        <p>Create a new post-apocalyptic vehicle using Flux workflow</p>
+        <p>Create a new post-apocalyptic vehicle using ComfyUI workflows</p>
       </PageHeader>
 
-      <FluxGenerationForm />
+      <TabContainer>
+        <Tab 
+          active={activeTab === 'flux'} 
+          onClick={() => setActiveTab('flux')}
+        >
+          Flux Workflow (Original)
+        </Tab>
+        <Tab 
+          active={activeTab === 'dynamic'} 
+          onClick={() => setActiveTab('dynamic')}
+        >
+          Dynamic Workflow (New)
+        </Tab>
+      </TabContainer>
+
+      {activeTab === 'flux' ? (
+        <FluxGenerationForm />
+      ) : (
+        <DynamicWorkflowForm />
+      )}
 
       <InfoSection>
         <h3>How it works</h3>
         <p>
-          This tool uses the Flux workflow in ComfyUI to generate post-apocalyptic vehicles based on your description.
-          Upload an image for depth map conditioning and a reference image for Redux styling.
+          This tool uses ComfyUI workflows to generate post-apocalyptic vehicles based on your description.
+          {activeTab === 'flux' ? (
+            ' Upload an image for depth map conditioning and a reference image for Redux styling.'
+          ) : (
+            ' The dynamic workflow system allows importing any workflow from JSON files without hardcoding.'
+          )}
         </p>
         <p>
           Once generated, you can view your vehicle in the <Link to="/assets">asset library</Link> 

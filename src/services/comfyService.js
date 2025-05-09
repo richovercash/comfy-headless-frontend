@@ -1,8 +1,7 @@
 // src/services/comfyService.js
 import axios from 'axios';
-// Import with explicit named import
-import { createFluxSimplifiedWorkflow } from '../workflows/fluxSimplified';
-import { validateWorkflow, convertEditorWorkflowToAPIFormat } from '../utils/workflowConverter';
+import { createCustomReduxWorkflow } from '../workflows/workingFluxAdapter';
+import { createWorkflowPayload } from '../utils/workflowImporter';
 
 // API base URL
 export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
@@ -30,14 +29,6 @@ export const ComfyService = {
   async queuePrompt(workflow) {
     try {
       console.log("Preparing workflow for ComfyUI submission...");
-      
-      // Step 1: Validate the workflow
-      const { isValid, errors } = validateWorkflow(workflow);
-      if (!isValid) {
-        const errorMsg = `Invalid workflow: ${errors.join(', ')}`;
-        console.error(errorMsg);
-        throw new Error(errorMsg);
-      }
       
       // Format expected by ComfyUI API
       const payload = {
@@ -103,8 +94,64 @@ export const ComfyService = {
   },
 
   /**
+   * Get the output of a specific execution
+   * @param {string} promptId - The prompt ID to get output for
+   */
+  async getOutput(promptId) {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/history/${promptId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error getting output:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Create a Flux workflow with the provided options
+   * Uses your ORIGINAL workflow with compatibility fixes applied
+   */
+  createFluxWorkflow(options) {
+    return createCustomReduxWorkflow(options);
+  },
+  
+  /**
+   * Create a workflow using the new dynamic workflow importer
+   * @param {string} workflowName - Name of the workflow in the registry
+   * @param {Object} parameters - Parameters to apply to the workflow
+   * @returns {Promise<Object>} - The workflow payload ready for submission
+   */
+  async createWorkflow(workflowName, parameters) {
+    try {
+      console.log(`Creating workflow "${workflowName}" with parameters:`, parameters);
+      const result = await createWorkflowPayload(workflowName, parameters);
+      return result;
+    } catch (error) {
+      console.error(`Error creating workflow "${workflowName}":`, error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Create and queue a workflow in one step
+   * @param {string} workflowName - Name of the workflow in the registry
+   * @param {Object} parameters - Parameters to apply to the workflow
+   * @returns {Promise<Object>} - The result of queueing the workflow
+   */
+  async createAndQueueWorkflow(workflowName, parameters) {
+    try {
+      const { payload, timestamp } = await this.createWorkflow(workflowName, parameters);
+      const result = await this.queuePrompt(payload.prompt);
+      return { ...result, timestamp };
+    } catch (error) {
+      console.error(`Error creating and queueing workflow "${workflowName}":`, error);
+      throw error;
+    }
+  },
+
+  /**
    * Test connection with a very simple connection verification
-   * Doesn't try to execute a workflow, just checks if the API is available
+   * Just checks if the API is available
    */
   async checkConnectionOnly() {
     try {
@@ -137,30 +184,8 @@ export const ComfyService = {
   },
 
   /**
-   * Get the output of a specific execution
-   * @param {string} promptId - The prompt ID to get output for
-   */
-  async getOutput(promptId) {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/history/${promptId}`);
-      return response.data;
-    } catch (error) {
-      console.error('Error getting output:', error);
-      throw error;
-    }
-  },
-
-  /**
-   * Create a Flux workflow with the provided options
-   * Uses our simplified, robust workflow
-   */
-  createFluxWorkflow(options) {
-    return createFluxSimplifiedWorkflow(options);
-  },
-
-  /**
    * Test connection to ComfyUI
-   * Only checks if the API is reachable, doesn't try to execute any workflows
+   * Only checks if the API is reachable
    */
   async testConnection() {
     try {
@@ -189,21 +214,6 @@ export const ComfyService = {
         success: false, 
         error: error
       };
-    }
-  },
-  
-  /**
-   * Process a workflow JSON from the ComfyUI editor
-   * Converts it to the format expected by the ComfyUI API
-   * @param {Object} editorWorkflow - The workflow from ComfyUI editor
-   * @returns {Object} - Processed workflow ready for the API
-   */
-  processEditorWorkflow(editorWorkflow) {
-    try {
-      return convertEditorWorkflowToAPIFormat(editorWorkflow);
-    } catch (error) {
-      console.error("Error processing editor workflow:", error);
-      throw error;
     }
   }
 };
