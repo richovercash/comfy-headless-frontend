@@ -4,6 +4,7 @@ import styled from 'styled-components';
 import ComfyService from '../services/comfyService';
 import SupabaseService from '../services/supabaseService';
 import ComfyUITroubleshooter from './ComfyUITroubleshooter';
+import CorsConfigGuide from './CorsConfigGuide';
 // import WorkflowLogger from '../utils/workflowLogger';
 
 export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
@@ -20,6 +21,7 @@ const FluxGenerationForm = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState({ message: '', error: false });
   const [showTroubleshooter, setShowTroubleshooter] = useState(false);
+  const [showCorsGuide, setShowCorsGuide] = useState(false);
 
   const handleChange = (key, value) => {
     setValues(prev => ({...prev, [key]: value}));
@@ -60,7 +62,7 @@ const FluxGenerationForm = () => {
       // Create the workflow
       setStatus({ message: 'Creating workflow...', error: false });
       // Make sure we're using the correct method
-      const { workflow, timestamp } = ComfyService.createFluxWorkflow({
+      const { workflow } = ComfyService.createFluxWorkflow({
         prompt: values.prompt,
         steps: values.steps,
         inputImageUrl: inputImagePath,
@@ -70,7 +72,7 @@ const FluxGenerationForm = () => {
       
       // Queue in ComfyUI
       setStatus({ message: 'Queueing workflow...', error: false });
-      const response = await ComfyService.queuePrompt(workflow);
+      await ComfyService.queuePrompt(workflow);
       
       setStatus({ 
         message: 'Generation in progress! Check the assets page for results when complete.', 
@@ -214,10 +216,18 @@ const FluxGenerationForm = () => {
               
               if (result && result.success) {
                 setStatus({ message: 'Connection test successful! ComfyUI is reachable.', error: false });
+                setShowCorsGuide(false);
               } else {
                 const errorMsg = result?.error?.message || 'Unknown error';
                 console.error("Test connection failed:", errorMsg);
                 setStatus({ message: `Connection test failed: ${errorMsg}`, error: true });
+                
+                // Show CORS guide if it looks like a CORS or network error
+                if (errorMsg.includes('NetworkError') || 
+                    errorMsg.includes('CORS') || 
+                    errorMsg.includes('Network Error')) {
+                  setShowCorsGuide(true);
+                }
               }
             } catch (error) {
               console.error("Error during test connection:", error);
@@ -225,6 +235,13 @@ const FluxGenerationForm = () => {
                 message: `Connection test error: ${error.message || 'Unknown error'}`, 
                 error: true 
               });
+              
+              // Show CORS guide if it looks like a CORS or network error
+              if (error.message.includes('NetworkError') || 
+                  error.message.includes('CORS') || 
+                  error.message.includes('Network Error')) {
+                setShowCorsGuide(true);
+              }
             }
           }}
         >
@@ -240,6 +257,8 @@ const FluxGenerationForm = () => {
           {showTroubleshooter ? 'Hide Troubleshooter' : 'Show Advanced Troubleshooter'}
         </Button>
       </TroubleshootingSection>
+      
+      {showCorsGuide && <CorsConfigGuide />}
       
       {showTroubleshooter && <ComfyUITroubleshooter />}
       

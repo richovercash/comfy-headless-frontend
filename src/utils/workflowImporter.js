@@ -78,6 +78,23 @@ export const workflowRegistry = {
         nodeType: 'FluxGuidance',
         paramPath: 'widgets_values[0]',
         fallbackPath: null
+      },
+      // Special parameters for image inputs
+      inputImageUrl: {
+        type: 'string',
+        description: 'URL to input image for depth map',
+        nodeType: 'LoadImage',
+        paramPath: 'widgets_values[0]',
+        fallbackPath: null,
+        condition: node => node.inputs && node.inputs.image_name === 'depth_input'
+      },
+      reduxImageUrl: {
+        type: 'string',
+        description: 'URL to redux reference image',
+        nodeType: 'LoadImage',
+        paramPath: 'widgets_values[0]',
+        fallbackPath: null,
+        condition: node => node.inputs && node.inputs.image_name === 'redux_reference'
       }
     }
   }
@@ -256,7 +273,54 @@ export function applyParametersToWorkflow(workflow, parameters, parameterMapping
     const mapping = parameterMappings[paramName];
     if (!mapping) continue;
     
-    // Find matching nodes
+    // Special handling for image URLs
+    if (paramName === 'inputImageUrl' || paramName === 'reduxImageUrl') {
+      if (!paramValue) continue; // Skip if no image URL provided
+      
+      // Find LoadImage nodes
+      const imageNodes = findNodesByType(modifiedWorkflow, 'LoadImage');
+      
+      // For inputImageUrl, find the node for depth input
+      // For reduxImageUrl, find the node for redux reference
+      let targetNodes = [];
+      
+      if (mapping.condition) {
+        targetNodes = imageNodes.filter(({ node }) => mapping.condition(node));
+      } else {
+        // Fallback to using all LoadImage nodes if no condition specified
+        targetNodes = imageNodes;
+      }
+      
+      if (targetNodes.length === 0) {
+        console.warn(`No LoadImage nodes found for ${paramName}`);
+        continue;
+      }
+      
+      // Apply the URL to each matching node
+      for (const { id, node } of targetNodes) {
+        let applied = false;
+        
+        // Try primary path first
+        if (mapping.paramPath) {
+          applied = setValueByPath(node, mapping.paramPath, paramValue);
+        }
+        
+        // If primary path failed, try fallback path
+        if (!applied && mapping.fallbackPath) {
+          applied = setValueByPath(node, mapping.fallbackPath, paramValue);
+        }
+        
+        if (applied) {
+          console.log(`Applied ${paramName} to node ${id}`);
+        } else {
+          console.warn(`Could not apply ${paramName} to node ${id}`);
+        }
+      }
+      
+      continue; // Skip the regular parameter application for image URLs
+    }
+    
+    // Regular parameter application
     const matchingNodes = findNodesByType(modifiedWorkflow, mapping.nodeType)
       .filter(({ node }) => mapping.condition ? mapping.condition(node) : true);
     

@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import styled from 'styled-components';
 import ComfyService from '../services/comfyService';
 import { validateWorkflow } from '../utils/workflowConverter';
+import CorsConfigGuide from './CorsConfigGuide';
 
 const TroubleshooterContainer = styled.div`
   background-color: #f5f5f5;
@@ -261,6 +262,13 @@ const ComfyUITroubleshooter = () => {
         <ResultContainer success={results.success}>
           <h3>{results.success ? 'System Check Passed!' : 'System Check Failed'}</h3>
           <p>{results.message}</p>
+          
+          {!results.success && results.message && 
+           (results.message.includes('NetworkError') || 
+            results.message.includes('CORS') || 
+            results.message.includes('Network Error')) && (
+            <CorsConfigGuide />
+          )}
         </ResultContainer>
       )}
       

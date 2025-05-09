@@ -3,7 +3,11 @@ import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import ComfyService from '../services/comfyService';
 import SupabaseService from '../services/supabaseService';
+import ComfyUITroubleshooter from './ComfyUITroubleshooter';
+import CorsConfigGuide from './CorsConfigGuide';
 import { workflowRegistry } from '../utils/workflowImporter';
+
+export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
 
 const DynamicWorkflowForm = () => {
   const [selectedWorkflow, setSelectedWorkflow] = useState('vehicle-generation');
@@ -18,8 +22,13 @@ const DynamicWorkflowForm = () => {
     guidanceScale: 3.5
   });
   
+  const [inputImage, setInputImage] = useState(null);
+  const [reduxImage, setReduxImage] = useState(null);
+  
   const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState({ message: '', error: false });
+  const [showTroubleshooter, setShowTroubleshooter] = useState(false);
+  const [showCorsGuide, setShowCorsGuide] = useState(false);
   const [availableWorkflows, setAvailableWorkflows] = useState([]);
   const [parameterDefs, setParameterDefs] = useState({});
 
@@ -95,9 +104,29 @@ const DynamicWorkflowForm = () => {
       
       console.log("Session created:", session);
       
-      // Create and queue the workflow
+      // Upload images if they exist
+      let inputImagePath = null;
+      let reduxImagePath = null;
+      
+      if (inputImage) {
+        setStatus({ message: 'Uploading input image...', error: false });
+        inputImagePath = await uploadFile(inputImage, 'input-images');
+      }
+      
+      if (reduxImage) {
+        setStatus({ message: 'Uploading redux image...', error: false });
+        reduxImagePath = await uploadFile(reduxImage, 'redux-images');
+      }
+      
+      // Create and queue the workflow with image paths
       setStatus({ message: 'Creating and queueing workflow...', error: false });
-      const result = await ComfyService.createAndQueueWorkflow(selectedWorkflow, parameters);
+      const workflowParams = {
+        ...parameters,
+        inputImageUrl: inputImagePath,
+        reduxImageUrl: reduxImagePath
+      };
+      
+      const result = await ComfyService.createAndQueueWorkflow(selectedWorkflow, workflowParams);
       
       console.log("Workflow queued:", result);
       
@@ -304,6 +333,27 @@ const DynamicWorkflowForm = () => {
     });
   };
 
+  // Helper function to upload a file to Supabase
+  const uploadFile = async (file, bucket) => {
+    const filename = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
+    const path = `${filename}`;
+    
+    await SupabaseService.uploadFile(bucket, path, file);
+    return `${bucket}/${path}`;
+  };
+
+  // Clear any existing file object URLs when component unmounts
+  useEffect(() => {
+    return () => {
+      if (inputImage instanceof File) {
+        URL.revokeObjectURL(URL.createObjectURL(inputImage));
+      }
+      if (reduxImage instanceof File) {
+        URL.revokeObjectURL(URL.createObjectURL(reduxImage));
+      }
+    };
+  }, [inputImage, reduxImage]);
+
   return (
     <FormContainer>
       <h2>Dynamic Workflow Generator</h2>
@@ -325,10 +375,118 @@ const DynamicWorkflowForm = () => {
         
         {renderParameterInputs()}
         
+        <FormGroup>
+          <Label>Input Image (for Depth Map)</Label>
+          <FileInput
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              if (e.target.files[0]) {
+                setInputImage(e.target.files[0]);
+              }
+            }}
+          />
+          {inputImage && (
+            <PreviewContainer>
+              <h4>Input Image:</h4>
+              <PreviewImage 
+                src={URL.createObjectURL(inputImage)} 
+                alt="Input Image" 
+              />
+              <small>This image will be used for depth-based conditioning</small>
+            </PreviewContainer>
+          )}
+        </FormGroup>
+
+        <FormGroup>
+          <Label>Redux Reference Image</Label>
+          <FileInput
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              if (e.target.files[0]) {
+                setReduxImage(e.target.files[0]);
+              }
+            }}
+          />
+          {reduxImage && (
+            <PreviewContainer>
+              <h4>Redux Reference:</h4>
+              <PreviewImage 
+                src={URL.createObjectURL(reduxImage)} 
+                alt="Redux Reference" 
+              />
+            </PreviewContainer>
+          )}
+        </FormGroup>
+        
         <Button type="submit" disabled={isGenerating}>
           {isGenerating ? 'Generating...' : 'Generate Image'}
         </Button>
       </Form>
+      
+      <TroubleshootingSection>
+        <h3>Troubleshooting</h3>
+        <Button 
+          type="button"
+          className="secondary"
+          onClick={async () => {
+            setStatus({ message: 'Testing connection...', error: false });
+            try {
+              console.log("Testing connection to ComfyUI...");
+              console.log("ComfyService API URL:", API_BASE_URL);
+              
+              // Test connection using our improved method
+              const result = await ComfyService.testConnection();
+              console.log("Test connection result:", result);
+              
+              if (result && result.success) {
+                setStatus({ message: 'Connection test successful! ComfyUI is reachable.', error: false });
+                setShowCorsGuide(false);
+              } else {
+                const errorMsg = result?.error?.message || 'Unknown error';
+                console.error("Test connection failed:", errorMsg);
+                setStatus({ message: `Connection test failed: ${errorMsg}`, error: true });
+                
+                // Show CORS guide if it looks like a CORS or network error
+                if (errorMsg.includes('NetworkError') || 
+                    errorMsg.includes('CORS') || 
+                    errorMsg.includes('Network Error')) {
+                  setShowCorsGuide(true);
+                }
+              }
+            } catch (error) {
+              console.error("Error during test connection:", error);
+              setStatus({ 
+                message: `Connection test error: ${error.message || 'Unknown error'}`, 
+                error: true 
+              });
+              
+              // Show CORS guide if it looks like a CORS or network error
+              if (error.message.includes('NetworkError') || 
+                  error.message.includes('CORS') || 
+                  error.message.includes('Network Error')) {
+                setShowCorsGuide(true);
+              }
+            }
+          }}
+        >
+          Test ComfyUI Connection
+        </Button>
+        
+        <Button
+          type="button"
+          className="secondary"
+          onClick={() => setShowTroubleshooter(!showTroubleshooter)}
+          style={{ marginLeft: '10px' }}
+        >
+          {showTroubleshooter ? 'Hide Troubleshooter' : 'Show Advanced Troubleshooter'}
+        </Button>
+      </TroubleshootingSection>
+      
+      {showCorsGuide && <CorsConfigGuide />}
+      
+      {showTroubleshooter && <ComfyUITroubleshooter />}
       
       <StatusMessage 
         visible={status.message ? true : false} 
@@ -383,6 +541,33 @@ const TextArea = styled.textarea`
   font-family: inherit;
 `;
 
+const FileInput = styled.input`
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+`;
+
+const PreviewContainer = styled.div`
+  margin-top: 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 12px;
+  background-color: #f9f9f9;
+  
+  h4 {
+    margin-top: 0;
+    margin-bottom: 8px;
+  }
+`;
+
+const PreviewImage = styled.img`
+  max-width: 100%;
+  max-height: 200px;
+  border-radius: 4px;
+  display: block;
+`;
+
 const Select = styled.select`
   padding: 10px;
   border: 1px solid #ddd;
@@ -392,7 +577,7 @@ const Select = styled.select`
 `;
 
 const Button = styled.button`
-  background-color: #007bff;
+  background-color: ${props => props.className === 'secondary' ? '#6c757d' : '#007bff'};
   color: white;
   border: none;
   border-radius: 4px;
@@ -402,12 +587,26 @@ const Button = styled.button`
   transition: background-color 0.2s ease;
 
   &:hover {
-    background-color: #0069d9;
+    background-color: ${props => props.className === 'secondary' ? '#5a6268' : '#0069d9'};
   }
 
   &:disabled {
     background-color: #cccccc;
     cursor: not-allowed;
+  }
+`;
+
+const TroubleshootingSection = styled.div`
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background-color: #f9f9f9;
+  
+  h3 {
+    margin-top: 0;
+    margin-bottom: 12px;
+    color: #333;
   }
 `;
 

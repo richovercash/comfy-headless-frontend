@@ -155,30 +155,73 @@ export const ComfyService = {
    */
   async checkConnectionOnly() {
     try {
-      // Just do a simple system stats request to check connectivity
-      const response = await fetch(`${API_BASE_URL}/system_stats`);
-      const isConnected = response.ok;
-      let data = null;
+      console.log("Checking connection to ComfyUI at:", API_BASE_URL);
       
+      // Try with fetch first with CORS mode
       try {
-        if (isConnected) {
-          data = await response.json();
+        // Just do a simple system stats request to check connectivity
+        const response = await fetch(`${API_BASE_URL}/system_stats`, {
+          method: 'GET',
+          mode: 'cors',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        const isConnected = response.ok;
+        let data = null;
+        
+        try {
+          if (isConnected) {
+            data = await response.json();
+          }
+        } catch (e) {
+          console.warn("Could not parse system stats response:", e);
         }
-      } catch (e) {
-        console.warn("Could not parse system stats response:", e);
+        
+        return {
+          success: isConnected,
+          data,
+          error: isConnected ? null : new Error(`Failed to connect: ${response.status}`)
+        };
+      } catch (fetchError) {
+        console.warn("Fetch attempt failed, trying axios as fallback:", fetchError);
+        
+        // If fetch fails, try with axios as a fallback
+        try {
+          const axiosResponse = await axios.get(`${API_BASE_URL}/system_stats`, {
+            timeout: 5000 // 5 second timeout
+          });
+          
+          return {
+            success: true,
+            data: axiosResponse.data,
+            error: null
+          };
+        } catch (axiosError) {
+          console.error("Axios fallback also failed:", axiosError);
+          throw axiosError;
+        }
+      }
+    } catch (error) {
+      console.error("Connection check failed:", error);
+      
+      // Provide more helpful error messages based on error type
+      let errorMessage = error.message;
+      
+      if (error.code === 'ECONNREFUSED') {
+        errorMessage = `Connection refused. Make sure ComfyUI is running at ${API_BASE_URL}`;
+      } else if (error.code === 'ECONNABORTED') {
+        errorMessage = `Connection timed out. ComfyUI server at ${API_BASE_URL} is not responding`;
+      } else if (error.message.includes('NetworkError') || error.message.includes('Network Error')) {
+        errorMessage = `Network error. This could be due to CORS issues. Make sure ComfyUI is running with --enable-cors-header="*"`;
       }
       
       return {
-        success: isConnected,
-        data,
-        error: isConnected ? null : new Error(`Failed to connect: ${response.status}`)
-      };
-    } catch (error) {
-      console.error("Connection check failed:", error);
-      return {
         success: false,
         data: null,
-        error
+        error: new Error(errorMessage)
       };
     }
   },
