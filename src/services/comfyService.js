@@ -46,7 +46,7 @@ export const ComfyService = {
       console.log("Sending payload:", JSON.stringify(payload).substring(0, 200) + "...");
       
       // Use fetch for simplicity and better error handling
-      const response = await fetch(`${this.baseUrl}/prompt`, {
+      const response = await fetch(`${API_BASE_URL}/prompt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -117,7 +117,7 @@ export const ComfyService = {
   async testConnection() {
     try {
       // First try a simple system_stats request to check connection
-      const statsResponse = await fetch(`${this.baseUrl}/system_stats`);
+      const statsResponse = await fetch(`${API_BASE_URL}/system_stats`);
       if (!statsResponse.ok) {
         return {
           success: false, 
@@ -164,7 +164,7 @@ export const ComfyService = {
       
       console.log("Sending test workflow to ComfyUI:", JSON.stringify(payload).substring(0, 200) + "...");
       
-      const response = await fetch(`${this.baseUrl}/prompt`, {
+      const response = await fetch(`${API_BASE_URL}/prompt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -333,6 +333,51 @@ export const ComfyService = {
 //     timestamp 
 //   };
 // }
+  // createFluxWorkflow({
+  //   prompt,
+  //   steps = 28,
+  //   inputImageUrl = null,
+  //   reduxImageUrl = null,
+  //   filenamePrefix = 'Otherides-2d/cycles_'
+  // }) {
+  //   const timestamp = Math.floor(Date.now()/1000);
+    
+  //   // Extremely simple workflow - just to test the connection
+  //   const workflow = {
+  //     "1": {
+  //       "class_type": "EmptyLatentImage",
+  //       "inputs": {
+  //         "width": 512,
+  //         "height": 512,
+  //         "batch_size": 1
+  //       }
+  //     },
+  //     "2": {
+  //       "class_type": "VAELoader",
+  //       "inputs": {
+  //         "vae_name": "vae-ft-mse-840000-ema-pruned.safetensors"
+  //       }
+  //     },
+  //     "3": {
+  //       "class_type": "VAEDecode",
+  //       "inputs": {
+  //         "samples": ["1", 0],
+  //         "vae": ["2", 0]
+  //       }
+  //     },
+  //     "4": {
+  //       "class_type": "SaveImage",
+  //       "inputs": {
+  //         "filename_prefix": `${filenamePrefix}${timestamp}`,
+  //         "images": ["3", 0]
+  //       }
+  //     }
+  //   };
+    
+  //   return { workflow, timestamp };
+  // },
+
+
   createFluxWorkflow({
     prompt,
     steps = 28,
@@ -342,47 +387,123 @@ export const ComfyService = {
   }) {
     const timestamp = Math.floor(Date.now()/1000);
     
-    // Extremely simple workflow - just to test the connection
+    // Start with a correctly structured Flux workflow
     const workflow = {
+      // First load the models
       "1": {
-        "class_type": "EmptyLatentImage",
+        "class_type": "UNETLoader",
         "inputs": {
-          "width": 512,
-          "height": 512,
-          "batch_size": 1
+          "unet_name": "blackforest/flux1-depth-dev.safetensors",
+          "weight_dtype": "fp8_e4m3fn"
         }
       },
       "2": {
-        "class_type": "VAELoader",
+        "class_type": "DualCLIPLoader",
         "inputs": {
-          "vae_name": "vae-ft-mse-840000-ema-pruned.safetensors"
+          "clip_name1": "Flux/t5xxl_fp16.safetensors", 
+          "clip_name2": "Flux/clip_l.safetensors",
+          "text_encoder_1_name": "flux",
+          "text_encoder_2_name": "default",
+          "type": "dual" // Fixed: Added the missing 'type' parameter
         }
       },
       "3": {
-        "class_type": "VAEDecode",
+        "class_type": "VAELoader",
         "inputs": {
-          "samples": ["1", 0],
-          "vae": ["2", 0]
+          "vae_name": "ae.sft"
         }
       },
+      
+      // Then set up the generation pipeline
       "4": {
+        "class_type": "EmptyLatentImage",
+        "inputs": {
+          "width": 1024,
+          "height": 1024,
+          "batch_size": 1
+        }
+      },
+      "5": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "text": prompt,
+          "clip": ["2", 0]
+        }
+      },
+      "6": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "text": "low quality, bad anatomy, blurry, pixelated",
+          "clip": ["2", 0]
+        }
+      },
+      "7": {
+        "class_type": "KSampler",
+        "inputs": {
+          "seed": Math.floor(Math.random() * 1000000),
+          "steps": steps,
+          "cfg": 7,
+          "sampler_name": "euler_ancestral",
+          "scheduler": "normal",
+          "denoise": 1,
+          "model": ["1", 0],
+          "positive": ["5", 0],
+          "negative": ["6", 0],
+          "latent_image": ["4", 0]
+        }
+      },
+      "8": {
+        "class_type": "VAEDecode",
+        "inputs": {
+          "samples": ["7", 0],
+          "vae": ["3", 0]
+        }
+      },
+      "9": {
         "class_type": "SaveImage",
         "inputs": {
           "filename_prefix": `${filenamePrefix}${timestamp}`,
-          "images": ["3", 0]
+          "images": ["8", 0]
         }
       }
     };
     
+    // Add additional nodes as needed
+    let nodeCount = 10;
+    
+    if (inputImageUrl) {
+      workflow[nodeCount++] = {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": inputImageUrl
+        }
+      };
+      // Additional depth processing nodes...
+    }
+    
+    if (reduxImageUrl) {
+      workflow[nodeCount++] = {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": reduxImageUrl
+        }
+      };
+      // Additional redux processing nodes...
+    }
+    
     return { workflow, timestamp };
   },
+
+
+
+
 
     // In src/services/comfyService.js
 
   // Add this method to your ComfyService object
   async testConnection() {
     try {
-      // Use API_BASE_URL directly, not this.baseUrl
+      // Use API_BASE_URL directly, not baseUrl
       const baseUrl = API_BASE_URL; // This is defined at the top of your file
       console.log("Testing connection to ComfyUI at:", baseUrl);
       

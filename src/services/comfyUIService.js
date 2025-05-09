@@ -12,7 +12,7 @@ console.error('Unhandled promise rejection:', event.reason);
 
 class ComfyUIService {
     constructor(baseUrl) {
-      this.baseUrl = baseUrl || process.env.REACT_APP_COMFYUI_API_URL;
+      baseUrl = baseUrl || process.env.REACT_APP_COMFYUI_API_URL;
       this.connected = false;
       this.retryCount = 0;
       this.maxRetries = 3;
@@ -25,7 +25,7 @@ class ComfyUIService {
     console.log("ComfyUI WS URL:", process.env.REACT_APP_COMFYUI_WS_URL);
     async checkConnection() {
       try {
-        const response = await fetch(`${this.baseUrl}/system_stats`);
+        const response = await fetch(`${baseUrl}/system_stats`);
         this.connected = response.ok;
         if (this.connected) {
           console.log("ComfyUI connection established");
@@ -56,7 +56,7 @@ class ComfyUIService {
     async getHistory() {
       if (!this.connected) await this.checkConnection();
       try {
-        const response = await fetch(`${this.baseUrl}/history`);
+        const response = await fetch(`${baseUrl}/history`);
         if (!response.ok) throw new Error(`HTTP error ${response.status}`);
         return await response.json();
       } catch (error) {
@@ -69,7 +69,7 @@ class ComfyUIService {
         if (!this.connected) await this.checkConnection();
         try {
           console.log("Sending to ComfyUI:", JSON.stringify(workflowData));
-          const response = await fetch(`${this.baseUrl}/prompt`, {
+          const response = await fetch(`${baseUrl}/prompt`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -93,7 +93,7 @@ class ComfyUIService {
     async getJobStatus(promptId) {
       if (!this.connected) await this.checkConnection();
       try {
-        const response = await fetch(`${this.baseUrl}/history/${promptId}`);
+        const response = await fetch(`${baseUrl}/history/${promptId}`);
         if (!response.ok) throw new Error(`HTTP error ${response.status}`);
         return await response.json();
       } catch (error) {
@@ -105,7 +105,7 @@ class ComfyUIService {
     async getGeneratedImage(filename) {
       if (!this.connected) await this.checkConnection();
       try {
-        const response = await fetch(`${this.baseUrl}/view?filename=${encodeURIComponent(filename)}`);
+        const response = await fetch(`${baseUrl}/view?filename=${encodeURIComponent(filename)}`);
         if (!response.ok) throw new Error(`HTTP error ${response.status}`);
         return response.url; // Return the URL to the image
       } catch (error) {

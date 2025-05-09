@@ -133,7 +133,7 @@ export const useComfyUI = (initialWorkflow = null) => {
       setError(null);
       setResults(null);
       
-      console.log("Preparing to send request to ComfyUI at:", this.baseUrl || process.env.REACT_APP_COMFYUI_API_URL);
+      console.log("Preparing to send request to ComfyUI at:", baseUrl || process.env.REACT_APP_COMFYUI_API_URL);
       
       const requestBody = {
         prompt: workflowData,
@@ -142,7 +142,7 @@ export const useComfyUI = (initialWorkflow = null) => {
       
       console.log("Sending request with body:", JSON.stringify(requestBody));
       
-      const response = await fetch(`${this.baseUrl || process.env.REACT_APP_COMFYUI_API_URL}/prompt`, {
+      const response = await fetch(`${baseUrl || process.env.REACT_APP_COMFYUI_API_URL}/prompt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
