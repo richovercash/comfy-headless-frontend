@@ -6,9 +6,6 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// console.log("ComfyUI API URL:", process.env.REACT_APP_COMFYUI_API_URL);
-// console.log("ComfyUI WS URL:", process.env.REACT_APP_COMFYUI_WS_URL);
-
 // Add near the top of your component or in a useEffect
 console.log("Supabase connection check:", 
   supabase.auth.getSession().then(res => console.log("Session:", res))
@@ -135,8 +132,6 @@ export const SupabaseService = {
    * Create a new generation session
    * @param {Object} parameters - Session parameters
    */
-
-
   async createSession(parameters = {}) {
     try {
       const { data, error } = await supabase
@@ -162,8 +157,58 @@ export const SupabaseService = {
       console.error('Exception in createSession:', err);
       throw err;
     }
+  },
 
-  },  
+  /**
+   * Upload a file to Supabase storage
+   * @param {string} bucket - The storage bucket name
+   * @param {string} path - The file path within the bucket
+   * @param {File} file - The file to upload
+   * @returns {Promise<string>} - The full storage path
+   */
+  async uploadFile(bucket, path, file) {
+    try {
+      console.log(`Uploading file to ${bucket}/${path}`);
+      
+      // Skip bucket creation - buckets should be created manually in Supabase dashboard
+      
+      const { data, error } = await supabase.storage
+        .from(bucket)
+        .upload(path, file);
+        
+      if (error) {
+        console.error(`Error uploading to ${bucket}:`, error);
+        throw error;
+      }
+      
+      console.log(`File uploaded successfully to ${bucket}/${path}`);
+      return `${bucket}/${path}`;
+    } catch (error) {
+      console.error(`Error uploading file to ${bucket}/${path}:`, error);
+      throw error;
+    }
+  },
+
+  /**
+   * Store a depth map image
+   * @param {string} inputImagePath - Path to the input image
+   * @param {Blob} depthMapBlob - The depth map image blob
+   * @returns {Promise<string>} - Path to the stored depth map
+   */
+  async storeDepthMap(inputImagePath, depthMapBlob) {
+    try {
+      const filename = `depth_${Date.now()}.png`;
+      
+      // Upload to depth-maps bucket
+      await this.uploadFile('depth-maps', filename, depthMapBlob);
+      
+      return `depth-maps/${filename}`;
+    } catch (error) {
+      console.error('Error storing depth map:', error);
+      throw error;
+    }
+  },
+  
   /**
    * Get all traits, optionally filtered by type
    * @param {string} traitType - Optional trait type to filter by

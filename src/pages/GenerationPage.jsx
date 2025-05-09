@@ -1,7 +1,7 @@
 // src/pages/GenerationPage.jsx
 import React from 'react';
 import styled from 'styled-components';
-import GenerationForm from '../components/GenerationForm';
+import FluxGenerationForm from '../components/FluxGenerationForm';
 import { Link } from 'react-router-dom';
 
 const PageContainer = styled.div`
@@ -27,17 +27,16 @@ const GenerationPage = () => {
     <PageContainer>
       <PageHeader>
         <h1>Generate New Vehicle</h1>
-        <p>Create a new post-apocalyptic vehicle using ComfyUI</p>
+        <p>Create a new post-apocalyptic vehicle using Flux workflow</p>
       </PageHeader>
 
-      <GenerationForm />
+      <FluxGenerationForm />
 
       <InfoSection>
         <h3>How it works</h3>
         <p>
-          This tool uses ComfyUI to generate post-apocalyptic vehicles based on your description 
-          and selected traits. First, provide a base description of the vehicle you want to create.
-          Then select any additional traits to include in the generation.
+          This tool uses the Flux workflow in ComfyUI to generate post-apocalyptic vehicles based on your description.
+          Upload an image for depth map conditioning and a reference image for Redux styling.
         </p>
         <p>
           Once generated, you can view your vehicle in the <Link to="/assets">asset library</Link> 
