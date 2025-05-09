@@ -7,6 +7,8 @@ import AssetDetailPage from './pages/AssetDetailPage';
 import GenerationPage from './pages/GenerationPage';
 import SessionsPage from './pages/SessionsPage';
 
+import ComfyUITroubleshooter from './components/ComfyUITroubleshooter';
+
 // Add this near the top of your main JS file
 window.addEventListener('error', function(event) {
   console.error('Global error:', event.error);

@@ -1,9 +1,9 @@
 // src/components/FluxGenerationForm.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
-import { useEffect } from 'react';
 import ComfyService from '../services/comfyService';
 import SupabaseService from '../services/supabaseService';
+import ComfyUITroubleshooter from './ComfyUITroubleshooter';
 
 export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
 
@@ -16,15 +16,14 @@ const FluxGenerationForm = () => {
     filenamePrefix: 'Otherides-2d',
   });
   
-  // const [depthMapPreview, setDepthMapPreview] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState({ message: '', error: false });
+  const [showTroubleshooter, setShowTroubleshooter] = useState(false);
 
   const handleChange = (key, value) => {
     setValues(prev => ({...prev, [key]: value}));
   };
 
-    // Update the handleSubmit function
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsGenerating(true);
@@ -57,6 +56,7 @@ const FluxGenerationForm = () => {
       
       // Create the workflow
       setStatus({ message: 'Creating workflow...', error: false });
+      // Make sure we're using the correct method
       const { workflow, timestamp } = ComfyService.createFluxWorkflow({
         prompt: values.prompt,
         steps: values.steps,
@@ -97,10 +97,8 @@ const FluxGenerationForm = () => {
     return `${bucket}/${path}`;
   };
 
-  // Modify your useEffect in FluxGenerationForm.jsx
-  // Remove this entire useEffect or replace it with a simpler one
+  // Clear any existing file object URLs when component unmounts
   useEffect(() => {
-    // Clear any existing file object URLs when component unmounts
     return () => {
       if (values.inputImage instanceof File) {
         URL.revokeObjectURL(URL.createObjectURL(values.inputImage));
@@ -111,163 +109,148 @@ const FluxGenerationForm = () => {
     };
   }, [values.inputImage, values.reduxImage]);
 
-
-
-
-
-
-
-
-
-  
-return (
-  <FormContainer>
-    <h2>Generate with Flux Workflow</h2>
-    
-    <Form onSubmit={handleSubmit}>
-      <FormGroup>
-        <Label>Prompt</Label>
-        <TextArea
-          value={values.prompt}
-          onChange={(e) => handleChange('prompt', e.target.value)}
-          placeholder="Enter your prompt"
-          rows={4}
-        />
-      </FormGroup>
+  return (
+    <FormContainer>
+      <h2>Generate with Flux Workflow</h2>
       
-      <FormGroup>
-        <Label>Steps</Label>
-        <Input
-          type="number"
-          min="1"
-          max="100"
-          value={values.steps}
-          onChange={(e) => handleChange('steps', parseInt(e.target.value))}
-        />
-      </FormGroup>
-      
-      <FormGroup>
-        <Label>Input Image (for Depth Map)</Label>
-        <FileInput
-          type="file"
-          accept="image/*"
-          onChange={(e) => {
-            if (e.target.files[0]) {
-              handleChange('inputImage', e.target.files[0]);
-            }
-          }}
-        />
-        {values.inputImage && (
-          <PreviewContainer>
-            <h4>Input Image:</h4>
-            <PreviewImage 
-              src={URL.createObjectURL(values.inputImage)} 
-              alt="Input Image" 
-            />
-            <small>This image will be used for depth-based conditioning</small>
-          </PreviewContainer>
-        )}
-      </FormGroup>
-
-      <FormGroup>
-        <Label>Redux Reference Image</Label>
-        <FileInput
-          type="file"
-          accept="image/*"
-          onChange={(e) => {
-            if (e.target.files[0]) {
-              handleChange('reduxImage', e.target.files[0]);
-            }
-          }}
-        />
-        {values.reduxImage && (
-          <PreviewContainer>
-            <h4>Redux Reference:</h4>
-            <PreviewImage 
-              src={URL.createObjectURL(values.reduxImage)} 
-              alt="Redux Reference" 
-            />
-          </PreviewContainer>
-        )}
-      </FormGroup>
-      
-      <FormGroup>
-        <Label>Filename Prefix</Label>
-        <Input
-          type="text"
-          value={values.filenamePrefix}
-          onChange={(e) => handleChange('filenamePrefix', e.target.value)}
-        />
-      </FormGroup>
-      
-      <Button type="submit" disabled={isGenerating}>
-        {isGenerating ? 'Generating...' : 'Generate Image'}
-      </Button>
-    </Form>
-    
-    {/* Add the test connection section after the form */}
-    <TroubleshootingSection>
-      <h3>Troubleshooting</h3>
-      <Button 
-        type="button"
-        className="secondary"
-        onClick={async () => {
-          setStatus({ message: 'Testing connection...', error: false });
-          try {
-            console.log("Testing connection to ComfyUI...");
-            console.log("ComfyService API URL:", API_BASE_URL); // Make sure this is exported
-            
-            // Check if ComfyService exists and has the method
-            if (!ComfyService) {
-              console.error("ComfyService is undefined");
-              setStatus({ message: "Error: ComfyService is undefined", error: true });
-              return;
-            }
-            
-            if (!ComfyService.testConnection) {
-              console.error("ComfyService.testConnection method is missing");
-              setStatus({ message: "Error: testConnection method is missing in ComfyService", error: true });
-              return;
-            }
-            
-            console.log("Calling ComfyService.testConnection...");
-            const result = await ComfyService.testConnection();
-            console.log("Test connection result:", result);
-            
-            if (result && result.success) {
-              setStatus({ message: 'Connection test successful!', error: false });
-            } else {
-              const errorMsg = result?.error?.message || 'Unknown error';
-              console.error("Test connection failed:", errorMsg);
-              setStatus({ message: `Connection test failed: ${errorMsg}`, error: true });
-            }
-          } catch (error) {
-            console.error("Error during test connection:", error);
-            setStatus({ 
-              message: `Connection test error: ${error.message || 'Unknown error'}`, 
-              error: true 
-            });
-          }
-        }}
+      <Form onSubmit={handleSubmit}>
+        <FormGroup>
+          <Label>Prompt</Label>
+          <TextArea
+            value={values.prompt}
+            onChange={(e) => handleChange('prompt', e.target.value)}
+            placeholder="Enter your prompt"
+            rows={4}
+          />
+        </FormGroup>
         
+        <FormGroup>
+          <Label>Steps</Label>
+          <Input
+            type="number"
+            min="1"
+            max="100"
+            value={values.steps}
+            onChange={(e) => handleChange('steps', parseInt(e.target.value))}
+          />
+        </FormGroup>
+        
+        <FormGroup>
+          <Label>Input Image (for Depth Map)</Label>
+          <FileInput
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              if (e.target.files[0]) {
+                handleChange('inputImage', e.target.files[0]);
+              }
+            }}
+          />
+          {values.inputImage && (
+            <PreviewContainer>
+              <h4>Input Image:</h4>
+              <PreviewImage 
+                src={URL.createObjectURL(values.inputImage)} 
+                alt="Input Image" 
+              />
+              <small>This image will be used for depth-based conditioning</small>
+            </PreviewContainer>
+          )}
+        </FormGroup>
+
+        <FormGroup>
+          <Label>Redux Reference Image</Label>
+          <FileInput
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              if (e.target.files[0]) {
+                handleChange('reduxImage', e.target.files[0]);
+              }
+            }}
+          />
+          {values.reduxImage && (
+            <PreviewContainer>
+              <h4>Redux Reference:</h4>
+              <PreviewImage 
+                src={URL.createObjectURL(values.reduxImage)} 
+                alt="Redux Reference" 
+              />
+            </PreviewContainer>
+          )}
+        </FormGroup>
+        
+        <FormGroup>
+          <Label>Filename Prefix</Label>
+          <Input
+            type="text"
+            value={values.filenamePrefix}
+            onChange={(e) => handleChange('filenamePrefix', e.target.value)}
+          />
+        </FormGroup>
+        
+        <Button type="submit" disabled={isGenerating}>
+          {isGenerating ? 'Generating...' : 'Generate Image'}
+        </Button>
+      </Form>
+      
+      <TroubleshootingSection>
+        <h3>Troubleshooting</h3>
+        <Button 
+          type="button"
+          className="secondary"
+          onClick={async () => {
+            setStatus({ message: 'Testing connection...', error: false });
+            try {
+              console.log("Testing connection to ComfyUI...");
+              console.log("ComfyService API URL:", API_BASE_URL);
+              
+              // Test connection using our improved method
+              const result = await ComfyService.testConnection();
+              console.log("Test connection result:", result);
+              
+              if (result && result.success) {
+                setStatus({ message: 'Connection test successful! ComfyUI is reachable.', error: false });
+              } else {
+                const errorMsg = result?.error?.message || 'Unknown error';
+                console.error("Test connection failed:", errorMsg);
+                setStatus({ message: `Connection test failed: ${errorMsg}`, error: true });
+              }
+            } catch (error) {
+              console.error("Error during test connection:", error);
+              setStatus({ 
+                message: `Connection test error: ${error.message || 'Unknown error'}`, 
+                error: true 
+              });
+            }
+          }}
+        >
+          Test ComfyUI Connection
+        </Button>
+        
+        <Button
+          type="button"
+          className="secondary"
+          onClick={() => setShowTroubleshooter(!showTroubleshooter)}
+          style={{ marginLeft: '10px' }}
+        >
+          {showTroubleshooter ? 'Hide Troubleshooter' : 'Show Advanced Troubleshooter'}
+        </Button>
+      </TroubleshootingSection>
+      
+      {showTroubleshooter && <ComfyUITroubleshooter />}
+      
+      <StatusMessage 
+        visible={status.message ? true : false} 
+        error={status.error}
       >
-        Test ComfyUI Connection
-      </Button>
-    </TroubleshootingSection>
-    
-    // And when using the component
-    <StatusMessage 
-      visible={status.message ? "true" : "false"} 
-      error={status.error ? "true" : "false"}
-    >
-      {status.message}
-    </StatusMessage>
-  </FormContainer>
-);
+        {status.message}
+      </StatusMessage>
+    </FormContainer>
+  );
 };
 
-// Make sure you have these styled components at the top of your file, 
-// along with your other styled components
+// Styled components
 const FormContainer = styled.div`
   background-color: #fff;
   border-radius: 8px;
@@ -337,9 +320,8 @@ const PreviewImage = styled.img`
   display: block;
 `;
 
-// Modified Button component without using a secondary prop
 const Button = styled.button`
-  background-color: #007bff; /* Primary color */
+  background-color: ${props => props.className === 'secondary' ? '#6c757d' : '#007bff'};
   color: white;
   border: none;
   border-radius: 4px;
@@ -349,34 +331,15 @@ const Button = styled.button`
   transition: background-color 0.2s ease;
 
   &:hover {
-    background-color: #0069d9;
+    background-color: ${props => props.className === 'secondary' ? '#5a6268' : '#0069d9'};
   }
 
   &:disabled {
     background-color: #cccccc;
     cursor: not-allowed;
   }
-  
-  &.secondary {
-    background-color: #6c757d;
-    
-    &:hover {
-      background-color: #5a6268;
-    }
-  }
 `;
 
-// In your styled components section
-const StatusMessage = styled.div`
-  padding: 12px;
-  margin-top: 16px;
-  border-radius: 4px;
-  background-color: ${props => props.error === "true" ? '#ffebee' : '#e8f5e9'};
-  color: ${props => props.error === "true" ? '#c62828' : '#2e7d32'};
-  display: ${props => props.visible === "true" ? 'block' : 'none'};
-`;
-
-// Add the missing TroubleshootingSection component
 const TroubleshootingSection = styled.div`
   margin-top: 24px;
   padding: 16px;
@@ -391,6 +354,13 @@ const TroubleshootingSection = styled.div`
   }
 `;
 
-
+const StatusMessage = styled.div`
+  padding: 12px;
+  margin-top: 16px;
+  border-radius: 4px;
+  background-color: ${props => props.error ? '#ffebee' : '#e8f5e9'};
+  color: ${props => props.error ? '#c62828' : '#2e7d32'};
+  display: ${props => props.visible ? 'block' : 'none'};
+`;
 
 export default FluxGenerationForm;

@@ -1,16 +1,13 @@
 // src/services/comfyService.js
 import axios from 'axios';
-// Update src/services/comfyService.js
-// In src/services/comfyService.js
-import { fluxWorkflow } from '../workflows';
-import { fluxNodes } from '../workflows/flux-config';
-import deepClone from 'lodash/cloneDeep';
+// Import with explicit named import
+import { createFluxSimplifiedWorkflow } from '../workflows/fluxSimplified';
+import { validateWorkflow, convertEditorWorkflowToAPIFormat } from '../utils/workflowConverter';
 
-
+// API base URL
 export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
 
 console.log("API URL:", API_BASE_URL);
-
 
 export const ComfyService = {
   /**
@@ -30,12 +27,17 @@ export const ComfyService = {
    * Queue a prompt for processing in ComfyUI
    * @param {Object} workflow - The workflow to queue
    */
-// In your comfyService.js, make sure your request format exactly matches what ComfyUI expects:
-
-  // Make sure your queuePrompt function in comfyService.js has the right format
   async queuePrompt(workflow) {
     try {
-      console.log("Queueing workflow:", workflow);
+      console.log("Preparing workflow for ComfyUI submission...");
+      
+      // Step 1: Validate the workflow
+      const { isValid, errors } = validateWorkflow(workflow);
+      if (!isValid) {
+        const errorMsg = `Invalid workflow: ${errors.join(', ')}`;
+        console.error(errorMsg);
+        throw new Error(errorMsg);
+      }
       
       // Format expected by ComfyUI API
       const payload = {
@@ -43,9 +45,9 @@ export const ComfyService = {
         client_id: "generator-" + Date.now()
       };
       
-      console.log("Sending payload:", JSON.stringify(payload).substring(0, 200) + "...");
+      console.log("Sending payload to ComfyUI:", JSON.stringify(payload).substring(0, 200) + "...");
       
-      // Use fetch for simplicity and better error handling
+      // Use fetch for better error handling
       const response = await fetch(`${API_BASE_URL}/prompt`, {
         method: 'POST',
         headers: {
@@ -60,7 +62,9 @@ export const ComfyService = {
         throw new Error(`Failed to queue prompt: ${response.status} - ${errorText}`);
       }
       
-      return await response.json();
+      const result = await response.json();
+      console.log("ComfyUI submission successful:", result);
+      return result;
     } catch (error) {
       console.error('Error queuing prompt:', error);
       throw error;
@@ -80,22 +84,55 @@ export const ComfyService = {
     }
   },
 
-    // Add this to your ComfyService
-  async getAvailableModels() {
+  /**
+   * Get the available node types and their configurations from ComfyUI
+   * This is useful for diagnosing compatibility issues
+   */
+  async getNodeTypes() {
     try {
-      // This endpoint might be different depending on your ComfyUI version
-      const response = await axios.get(`${API_BASE_URL}/object_info`);
-      const data = response.data;
-      
-      // Extract available models from the response
-      if (data && data.CheckpointLoaderSimple && data.CheckpointLoaderSimple.input.required.ckpt_name) {
-        return data.CheckpointLoaderSimple.input.required.ckpt_name.options;
+      const response = await fetch(`${API_BASE_URL}/object_info`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch node types: ${response.status}`);
       }
       
-      return [];
+      return await response.json();
     } catch (error) {
-      console.error('Error getting available models:', error);
-      return [];
+      console.error("Error fetching node types:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Test connection with a very simple connection verification
+   * Doesn't try to execute a workflow, just checks if the API is available
+   */
+  async checkConnectionOnly() {
+    try {
+      // Just do a simple system stats request to check connectivity
+      const response = await fetch(`${API_BASE_URL}/system_stats`);
+      const isConnected = response.ok;
+      let data = null;
+      
+      try {
+        if (isConnected) {
+          data = await response.json();
+        }
+      } catch (e) {
+        console.warn("Could not parse system stats response:", e);
+      }
+      
+      return {
+        success: isConnected,
+        data,
+        error: isConnected ? null : new Error(`Failed to connect: ${response.status}`)
+      };
+    } catch (error) {
+      console.error("Connection check failed:", error);
+      return {
+        success: false,
+        data: null,
+        error
+      };
     }
   },
 
@@ -113,474 +150,62 @@ export const ComfyService = {
     }
   },
 
-    // Add this method to your ComfyService
-  async testConnection() {
-    try {
-      // First try a simple system_stats request to check connection
-      const statsResponse = await fetch(`${API_BASE_URL}/system_stats`);
-      if (!statsResponse.ok) {
-        return {
-          success: false, 
-          error: new Error(`System stats request failed with status: ${statsResponse.status}`)
-        };
-      }
-      
-      // Test with a simple valid workflow
-      const testWorkflow = {
-        "1": {
-          "class_type": "EmptyLatentImage",
-          "inputs": {
-            "width": 512,
-            "height": 512,
-            "batch_size": 1
-          }
-        },
-        "2": {
-          "class_type": "VAELoader",
-          "inputs": {
-            "vae_name": "vae-ft-mse-840000-ema-pruned.safetensors"
-          }
-        },
-        "3": {
-          "class_type": "VAEDecode",
-          "inputs": {
-            "samples": ["1", 0],
-            "vae": ["2", 0]
-          }
-        },
-        "4": {
-          "class_type": "SaveImage",
-          "inputs": {
-            "filename_prefix": "connection_test",
-            "images": ["3", 0]
-          }
-        }
-      };
-      
-      const payload = {
-        prompt: testWorkflow,
-        client_id: "test-" + Date.now()
-      };
-      
-      console.log("Sending test workflow to ComfyUI:", JSON.stringify(payload).substring(0, 200) + "...");
-      
-      const response = await fetch(`${API_BASE_URL}/prompt`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload)
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Test connection error response:", errorText);
-        return {success: false, error: new Error(errorText)};
-      }
-      
-      const result = await response.json();
-      console.log("Connection test successful!", result);
-      return {success: true, result};
-    } catch (error) {
-      console.error("Connection test failed!", error);
-      return {success: false, error};
-    }
+  /**
+   * Create a Flux workflow with the provided options
+   * Uses our simplified, robust workflow
+   */
+  createFluxWorkflow(options) {
+    return createFluxSimplifiedWorkflow(options);
   },
 
-  // Add this to src/services/comfyService.js
-
   /**
-   * Generate a depth map from an input image
-   * @param {string} imageUrl - URL or path to the input image
-   * @returns {Promise<string>} - URL to the generated depth map
+   * Test connection to ComfyUI
+   * Only checks if the API is reachable, doesn't try to execute any workflows
    */
-  // async generateDepthMap(imageUrl) {
-  //   try {
-  //     console.log("Generating depth map for image:", imageUrl);
-      
-  //     // For now, we'll create a mock implementation
-  //     // In a real implementation, you would:
-  //     // 1. Create a simplified workflow that uses your DepthAnything_V2 node
-  //     // 2. Execute that workflow with ComfyUI
-  //     // 3. Return the URL to the generated depth map
-      
-  //     // Mock delay to simulate processing
-  //     await new Promise(resolve => setTimeout(resolve, 1500));
-      
-  //     // For testing, return a placeholder depth map
-  //     // You can replace this with actual depth map generation later
-      
-  //     // Option 1: Return a placeholder image URL
-  //     return 'https://via.placeholder.com/512x512/333333/FFFFFF?text=Depth+Map';
-      
-  //     // Option 2: When you're ready to implement real depth map generation:
-  //     /*
-  //     // Create a simplified workflow for depth map generation
-  //     const depthWorkflow = {
-  //       // Nodes from your workflow that handle depth map generation
-  //       // You'll need to extract these from your Redux-Simple.json
-  //     };
-      
-  //     // Execute the workflow
-  //     const result = await this.queuePrompt(depthWorkflow);
-      
-  //     // Wait for the workflow to complete
-  //     // Implement polling or WebSocket monitoring here
-      
-  //     // Return the URL to the generated depth map
-  //     return `http://localhost:8188/view?filename=depth_${Date.now()}.png`;
-  //     */
-  //   } catch (error) {
-  //     console.error("Error generating depth map:", error);
-  //     throw error;
-  //   }
-  // }
-
-
-
-
-  /**
-   * Create a simple workflow for generating a post-apocalyptic vehicle
-   * @param {string} prompt - The text prompt for generation
-   * @param {Array} traits - Array of traits to include in generation
-   */
-//   createFluxWorkflow({
-//     prompt,
-//     steps = 28,
-//     inputImageUrl = null,
-//     reduxImageUrl = null,
-//     filenamePrefix = 'Otherides-2d_'
-//   }) {
-//     // Create a timestamp for the filename
-//   const timestamp = Math.floor(Date.now()/1000);
-  
-//   // Clone the original workflow
-//   const workflow = deepClone(fluxWorkflow);
-  
-//   // Check if workflow has nodes property - ComfyUI expects nodes directly, not wrapped in an object
-//   const actualWorkflow = workflow.nodes ? workflow.nodes : workflow;
-  
-//   console.log("Workflow structure check:", {
-//     hasNodesProperty: Boolean(workflow.nodes),
-//     topLevelKeys: Object.keys(workflow),
-//     firstNodeSample: actualWorkflow[Object.keys(actualWorkflow)[0]]
-//   });
-  
-//   // Set prompt in CLIPTextEncode node (node 52)
-//   if (actualWorkflow[52] && actualWorkflow[52].widgets_values) {
-//     actualWorkflow[52].widgets_values = [prompt];
-//   } else {
-//     console.warn("Could not find CLIPTextEncode node for prompt");
-//   }
-  
-//   // Set steps in BasicScheduler node (node 15)
-//   if (actualWorkflow[15] && actualWorkflow[15].widgets_values) {
-//     actualWorkflow[15].widgets_values = ["simple", steps, 1];
-//   } else {
-//     console.warn("Could not find BasicScheduler node for steps");
-//   }
-  
-//   // Set filename prefix in Text Multiline node (node 25)
-//   if (actualWorkflow[25] && actualWorkflow[25].widgets_values) {
-//     actualWorkflow[25].widgets_values = [filenamePrefix];
-//   } else {
-//     console.warn("Could not find Text Multiline node for filename");
-//   }
-  
-//   // Set random seed
-//   if (actualWorkflow[16] && actualWorkflow[16].widgets_values) {
-//     actualWorkflow[16].widgets_values = [Math.floor(Math.random() * 1000000), "fixed"];
-//   } else {
-//     console.warn("Could not find RandomNoise node for seed");
-//   }
-  
-//   // Set input image if provided
-//   if (inputImageUrl && actualWorkflow[79] && actualWorkflow[79].widgets_values) {
-//     actualWorkflow[79].widgets_values = [inputImageUrl, "image", ""];
-//   } else if (inputImageUrl) {
-//     console.warn("Could not find LoadImage node for input image");
-//   }
-  
-//   // Set redux image if provided
-//   if (reduxImageUrl && actualWorkflow[59] && actualWorkflow[59].widgets_values) {
-//     actualWorkflow[59].widgets_values = [reduxImageUrl, "image", ""];
-//   } else if (reduxImageUrl) {
-//     console.warn("Could not find LoadImage node for redux image");
-//   }
-  
-//   // Make sure all nodes have class_type property
-//   Object.keys(actualWorkflow).forEach(nodeId => {
-//     const node = actualWorkflow[nodeId];
-//     if (!node.class_type && node.type) {
-//       // If missing class_type but has type, use that
-//       node.class_type = node.type;
-//     }
-//     // Add error checking for missing class_type
-//     if (!node.class_type) {
-//       console.error(`Node ${nodeId} is missing class_type property:`, node);
-//     }
-//   });
-
-//     console.log("Generated workflow structure:", {
-//     nodeCount: Object.keys(workflow).length,
-//     hasLinks: workflow.links !== undefined,
-//     firstNodeSample: workflow[Object.keys(workflow)[0]]
-//   });
-  
-//   // Return the appropriate workflow structure based on what ComfyUI expects
-//   return { 
-//     workflow: workflow.nodes ? workflow.nodes : workflow, 
-//     timestamp 
-//   };
-// }
-  // createFluxWorkflow({
-  //   prompt,
-  //   steps = 28,
-  //   inputImageUrl = null,
-  //   reduxImageUrl = null,
-  //   filenamePrefix = 'Otherides-2d/cycles_'
-  // }) {
-  //   const timestamp = Math.floor(Date.now()/1000);
-    
-  //   // Extremely simple workflow - just to test the connection
-  //   const workflow = {
-  //     "1": {
-  //       "class_type": "EmptyLatentImage",
-  //       "inputs": {
-  //         "width": 512,
-  //         "height": 512,
-  //         "batch_size": 1
-  //       }
-  //     },
-  //     "2": {
-  //       "class_type": "VAELoader",
-  //       "inputs": {
-  //         "vae_name": "vae-ft-mse-840000-ema-pruned.safetensors"
-  //       }
-  //     },
-  //     "3": {
-  //       "class_type": "VAEDecode",
-  //       "inputs": {
-  //         "samples": ["1", 0],
-  //         "vae": ["2", 0]
-  //       }
-  //     },
-  //     "4": {
-  //       "class_type": "SaveImage",
-  //       "inputs": {
-  //         "filename_prefix": `${filenamePrefix}${timestamp}`,
-  //         "images": ["3", 0]
-  //       }
-  //     }
-  //   };
-    
-  //   return { workflow, timestamp };
-  // },
-
-
-  createFluxWorkflow({
-    prompt,
-    steps = 28,
-    inputImageUrl = null,
-    reduxImageUrl = null,
-    filenamePrefix = 'Otherides-2d/cycles_'
-  }) {
-    const timestamp = Math.floor(Date.now()/1000);
-    
-    // Start with a correctly structured Flux workflow
-    const workflow = {
-      // First load the models
-      "1": {
-        "class_type": "UNETLoader",
-        "inputs": {
-          "unet_name": "blackforest/flux1-depth-dev.safetensors",
-          "weight_dtype": "fp8_e4m3fn"
-        }
-      },
-      "2": {
-        "class_type": "DualCLIPLoader",
-        "inputs": {
-          "clip_name1": "Flux/t5xxl_fp16.safetensors", 
-          "clip_name2": "Flux/clip_l.safetensors",
-          "text_encoder_1_name": "flux",
-          "text_encoder_2_name": "default",
-          "type": "dual" // Fixed: Added the missing 'type' parameter
-        }
-      },
-      "3": {
-        "class_type": "VAELoader",
-        "inputs": {
-          "vae_name": "ae.sft"
-        }
-      },
-      
-      // Then set up the generation pipeline
-      "4": {
-        "class_type": "EmptyLatentImage",
-        "inputs": {
-          "width": 1024,
-          "height": 1024,
-          "batch_size": 1
-        }
-      },
-      "5": {
-        "class_type": "CLIPTextEncode",
-        "inputs": {
-          "text": prompt,
-          "clip": ["2", 0]
-        }
-      },
-      "6": {
-        "class_type": "CLIPTextEncode",
-        "inputs": {
-          "text": "low quality, bad anatomy, blurry, pixelated",
-          "clip": ["2", 0]
-        }
-      },
-      "7": {
-        "class_type": "KSampler",
-        "inputs": {
-          "seed": Math.floor(Math.random() * 1000000),
-          "steps": steps,
-          "cfg": 7,
-          "sampler_name": "euler_ancestral",
-          "scheduler": "normal",
-          "denoise": 1,
-          "model": ["1", 0],
-          "positive": ["5", 0],
-          "negative": ["6", 0],
-          "latent_image": ["4", 0]
-        }
-      },
-      "8": {
-        "class_type": "VAEDecode",
-        "inputs": {
-          "samples": ["7", 0],
-          "vae": ["3", 0]
-        }
-      },
-      "9": {
-        "class_type": "SaveImage",
-        "inputs": {
-          "filename_prefix": `${filenamePrefix}${timestamp}`,
-          "images": ["8", 0]
-        }
-      }
-    };
-    
-    // Add additional nodes as needed
-    let nodeCount = 10;
-    
-    if (inputImageUrl) {
-      workflow[nodeCount++] = {
-        "class_type": "LoadImage",
-        "inputs": {
-          "image": inputImageUrl
-        }
-      };
-      // Additional depth processing nodes...
-    }
-    
-    if (reduxImageUrl) {
-      workflow[nodeCount++] = {
-        "class_type": "LoadImage",
-        "inputs": {
-          "image": reduxImageUrl
-        }
-      };
-      // Additional redux processing nodes...
-    }
-    
-    return { workflow, timestamp };
-  },
-
-
-
-
-
-    // In src/services/comfyService.js
-
-  // Add this method to your ComfyService object
   async testConnection() {
     try {
-      // Use API_BASE_URL directly, not baseUrl
-      const baseUrl = API_BASE_URL; // This is defined at the top of your file
-      console.log("Testing connection to ComfyUI at:", baseUrl);
+      console.log("Testing connection to ComfyUI at:", API_BASE_URL);
       
-      // First try a simple system_stats request
-      const statsResponse = await fetch(`${baseUrl}/system_stats`);
-      if (!statsResponse.ok) {
-        console.error(`System stats request failed with status: ${statsResponse.status}`);
+      // Simply check if we can connect to the API
+      const result = await this.checkConnectionOnly();
+      
+      if (result.success) {
+        console.log("Connection to ComfyUI successful!");
         return {
-          success: false, 
-          error: new Error(`System stats request failed with status: ${statsResponse.status}`)
+          success: true, 
+          message: "Connected to ComfyUI successfully",
+          data: result.data
+        };
+      } else {
+        console.error("Failed to connect to ComfyUI:", result.error);
+        return {
+          success: false,
+          error: result.error
         };
       }
-      
-      // Test with a simple valid workflow
-      const testWorkflow = {
-        "1": {
-          "class_type": "EmptyLatentImage",
-          "inputs": {
-            "width": 512,
-            "height": 512,
-            "batch_size": 1
-          }
-        },
-        "2": {
-          "class_type": "VAELoader",
-          "inputs": {
-            "vae_name": "vae-ft-mse-840000-ema-pruned.safetensors"
-          }
-        },
-        "3": {
-          "class_type": "VAEDecode",
-          "inputs": {
-            "samples": ["1", 0],
-            "vae": ["2", 0]
-          }
-        },
-        "4": {
-          "class_type": "SaveImage",
-          "inputs": {
-            "filename_prefix": "connection_test",
-            "images": ["3", 0]
-          }
-        }
-      };
-      
-      const payload = {
-        prompt: testWorkflow,
-        client_id: "test-" + Date.now()
-      };
-      
-      console.log("Sending payload:", JSON.stringify(payload).substring(0, 100) + "...");
-      
-      const response = await fetch(`${baseUrl}/prompt`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload)
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Server error response:", errorText);
-        return {success: false, error: new Error(`Failed to queue prompt: ${response.status} - ${errorText}`)};
-      }
-      
-      const result = await response.json();
-      console.log("Connection test successful!", result);
-      return {success: true, result};
     } catch (error) {
-      console.error("Connection test failed!", error);
-      return {success: false, error};
+      console.error("Connection test failed:", error);
+      return {
+        success: false, 
+        error: error
+      };
+    }
+  },
+  
+  /**
+   * Process a workflow JSON from the ComfyUI editor
+   * Converts it to the format expected by the ComfyUI API
+   * @param {Object} editorWorkflow - The workflow from ComfyUI editor
+   * @returns {Object} - Processed workflow ready for the API
+   */
+  processEditorWorkflow(editorWorkflow) {
+    try {
+      return convertEditorWorkflowToAPIFormat(editorWorkflow);
+    } catch (error) {
+      console.error("Error processing editor workflow:", error);
+      throw error;
     }
   }
-
-
 };
 
 export default ComfyService;
-
