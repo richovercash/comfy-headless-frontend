@@ -96,4 +96,5 @@ export function createDirectFluxWorkflow(options = {}) {
   return { workflow, timestamp };
 }
 
+// Export both the named function and a default object
 export default { createDirectFluxWorkflow };
