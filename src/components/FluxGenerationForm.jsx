@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import ComfyService from '../services/comfyService';
 import SupabaseService from '../services/supabaseService';
+import { supabase } from "../services/supabaseService";
 import ComfyUITroubleshooter from './ComfyUITroubleshooter';
 
 export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
@@ -19,6 +20,9 @@ const FluxGenerationForm = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState({ message: '', error: false });
   const [showTroubleshooter, setShowTroubleshooter] = useState(false);
+  const [generationTimestamp, setGenerationTimestamp] = useState(null);
+  const [pollingAttempts, setPollingAttempts] = useState(0);
+  const [sessionId, setSessionId] = useState(null);
 
   const handleChange = (key, value) => {
     setValues(prev => ({...prev, [key]: value}));
@@ -28,6 +32,7 @@ const FluxGenerationForm = () => {
     e.preventDefault();
     setIsGenerating(true);
     setStatus({ message: 'Starting generation...', error: false });
+    setPollingAttempts(0);
 
     try {
       // Create a session for tracking
@@ -39,6 +44,7 @@ const FluxGenerationForm = () => {
       });
       
       console.log("Session created:", session);
+      setSessionId(session.id);
       
       // Upload images if they exist
       let inputImagePath = null;
@@ -56,7 +62,6 @@ const FluxGenerationForm = () => {
       
       // Create the workflow
       setStatus({ message: 'Creating workflow...', error: false });
-      // Make sure we're using the correct method
       const { workflow, timestamp } = ComfyService.createFluxWorkflow({
         prompt: values.prompt,
         steps: values.steps,
@@ -65,17 +70,20 @@ const FluxGenerationForm = () => {
         filenamePrefix: values.filenamePrefix
       });
       
+      // Save the timestamp for later use in polling
+      setGenerationTimestamp(timestamp);
+      
       // Queue in ComfyUI
       setStatus({ message: 'Queueing workflow...', error: false });
       const response = await ComfyService.queuePrompt(workflow);
       
       setStatus({ 
-        message: 'Generation in progress! Check the assets page for results when complete.', 
+        message: 'Generation in progress! Waiting for results...', 
         error: false 
       });
       
-      // Here you'd implement polling for completion
-      // Similar to your existing GenerationForm implementation
+      // Begin polling for completion
+      setTimeout(() => checkCompletion(response.prompt_id, timestamp, session.id), 2000);
       
     } catch (error) {
       console.error('Error generating asset:', error);
@@ -83,7 +91,6 @@ const FluxGenerationForm = () => {
         message: `Error: ${error.message}`, 
         error: true 
       });
-    } finally {
       setIsGenerating(false);
     }
   };
@@ -95,6 +102,188 @@ const FluxGenerationForm = () => {
     
     await SupabaseService.uploadFile(bucket, path, file);
     return `${bucket}/${path}`;
+  };
+
+  // Function to check if generation is complete and process results
+  const checkCompletion = async (promptId, timestamp, sessionId) => {
+    if (pollingAttempts >= 15) {
+      setStatus({ 
+        message: 'Generation timed out. Check assets page later for results.', 
+        error: true 
+      });
+      setIsGenerating(false);
+      return;
+    }
+
+    setPollingAttempts(prev => prev + 1);
+    setStatus({ 
+      message: `Generation in progress... (attempt ${pollingAttempts + 1}/15)`, 
+      error: false 
+    });
+
+    try {
+      console.log("Checking generation status for timestamp:", timestamp);
+      
+      // Try to find the generated file by testing different filename patterns
+      const timeBasedFilenames = [
+        `${values.filenamePrefix}${timestamp}.png`,
+        `${values.filenamePrefix}${timestamp}_00001.png`,
+        `${values.filenamePrefix}${timestamp}_00001_.png`
+      ];
+
+      let isComplete = false;
+      let outputFilename = null;
+      
+      for (const filename of timeBasedFilenames) {
+        try {
+          const testUrl = `${API_BASE_URL}/view?filename=${encodeURIComponent(filename)}`;
+          console.log("Testing URL:", testUrl);
+          
+          const testResponse = await fetch(testUrl, { method: 'HEAD' });
+          
+          if (testResponse.ok) {
+            console.log("Found image at:", filename);
+            outputFilename = filename;
+            isComplete = true;
+            break;
+          }
+        } catch (e) {
+          console.log("Error checking filename:", filename, e);
+        }
+      }
+
+      if (isComplete && outputFilename) {
+        await processGeneratedImage(outputFilename, sessionId);
+      } else {
+        // Not found yet, continue polling
+        setTimeout(() => checkCompletion(promptId, timestamp, sessionId), 2000);
+      }
+    } catch (error) {
+      console.error("Error in checkCompletion:", error);
+      setStatus({ 
+        message: `Error checking generation status: ${error.message}`, 
+        error: true 
+      });
+      setIsGenerating(false);
+    }
+  };
+
+  // Function to process the generated image once found
+  const processGeneratedImage = async (filename, sessionId) => {
+    try {
+      console.log("Processing generated image:", filename);
+      setStatus({ message: 'Generation complete! Processing results...', error: false });
+      
+      // Get the image file from ComfyUI
+      const imageUrl = `${API_BASE_URL}/view?filename=${encodeURIComponent(filename)}`;
+      console.log("Fetching image from URL:", imageUrl);
+      
+      const imageResponse = await fetch(imageUrl);
+      
+      if (!imageResponse.ok) {
+        throw new Error(`Failed to fetch image: ${imageResponse.status}`);
+      }
+      
+      const imageBlob = await imageResponse.blob();
+      
+      // Upload to Supabase storage
+      const storagePath = `${sessionId}/${filename}`;
+      console.log("Uploading to Supabase storage:", storagePath);
+      
+      // Make sure the bucket exists
+      try {
+        const { data: buckets } = await supabase.storage.listBuckets();
+        const bucketExists = buckets.some(b => b.name === 'images-2d');
+        
+        if (!bucketExists) {
+          console.log("Creating storage bucket 'images-2d'");
+          await supabase.storage.createBucket('images-2d', {
+            public: false,
+            allowedMimeTypes: ['image/png'],
+            fileSizeLimit: 10485760 // 10MB
+          });
+        }
+      } catch (error) {
+        console.error("Error handling bucket:", error);
+        // Continue anyway, in case the error is just with checking/creating
+      }
+      
+      const { data: uploadData, error: uploadError } = await supabase
+        .storage
+        .from('images-2d')
+        .upload(storagePath, imageBlob);
+        
+      if (uploadError) {
+        throw new Error(`Failed to upload image: ${uploadError.message}`);
+      }
+      
+      // Create asset record in database
+      console.log("Creating asset record in database");
+      const { data: assetData, error: assetError } = await supabase
+        .from('assets')
+        .insert([
+          {
+            asset_type: 'image_2d',
+            storage_path: `images-2d/${storagePath}`, // Make sure path includes bucket name
+            parent_asset_id: null, // This is an original generation
+            status: 'complete',
+            metadata: {
+              prompt: values.prompt,
+              steps: values.steps,
+              filename: filename
+            }
+          }
+        ])
+        .select();
+        
+      if (assetError) {
+        throw new Error(`Failed to create asset record: ${assetError.message}`);
+      }
+      
+      console.log("Asset created:", assetData);
+      
+      // Link asset to session
+      if (assetData && assetData.length > 0) {
+        console.log("Linking asset to session");
+        const { error: sessionLinkError } = await supabase
+          .from('session_assets')
+          .insert([
+            {
+              session_id: sessionId,
+              asset_id: assetData[0].id
+            }
+          ]);
+          
+        if (sessionLinkError) {
+          console.error("Failed to link asset to session:", sessionLinkError);
+        }
+      }
+      
+      // Update session status
+      console.log("Updating session status to completed");
+      const { error: sessionUpdateError } = await supabase
+        .from('generation_sessions')
+        .update({ status: 'completed' })
+        .eq('id', sessionId);
+        
+      if (sessionUpdateError) {
+        console.error("Failed to update session status:", sessionUpdateError);
+      }
+      
+      setStatus({ 
+        message: 'Generation completed successfully! You can view the result on the Assets page.', 
+        error: false 
+      });
+      
+    } catch (error) {
+      console.error("Error processing generated image:", error);
+      setStatus({ 
+        message: `Error processing generation results: ${error.message}`, 
+        error: true 
+      });
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   // Clear any existing file object URLs when component unmounts
