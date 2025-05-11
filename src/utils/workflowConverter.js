@@ -22,7 +22,7 @@ export const convertEditorWorkflowToAPIFormat = (editorWorkflow) => {
       
       // Copy over any additional properties that might exist
       if (node.widgets_values) {
-        apiWorkflow[node.id].widgets_values = node.widgets_values;
+        apiWorkflow[node.id].widgets_values = [...node.widgets_values];
       }
       
       // Handle inputs if they exist
@@ -48,6 +48,14 @@ export const convertEditorWorkflowToAPIFormat = (editorWorkflow) => {
             }
           }
         });
+      }
+      
+      // Special handling for SaveImage node
+      if (node.type === 'SaveImage') {
+        // Ensure filename_prefix is properly set in inputs
+        if (node.widgets_values && node.widgets_values.length > 0) {
+          apiWorkflow[node.id].inputs.filename_prefix = node.widgets_values[0];
+        }
       }
     });
     

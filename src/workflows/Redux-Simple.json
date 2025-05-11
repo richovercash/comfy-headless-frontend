@@ -140,7 +140,7 @@
         "ver": "0.3.27",
         "Node name for S&R": "SaveImage"
       },
-      "widgets_values": ["Flux/Image"],
+      "widgets_values": ["Vehicle"],
       "color": "#222",
       "bgcolor": "#000"
     },

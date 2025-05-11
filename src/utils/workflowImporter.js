@@ -58,13 +58,32 @@ export const workflowRegistry = {
         paramPath: 'inputs.height',
         fallbackPath: 'widgets_values[1]'
       },
+      // 1. Update the filenamePrefix parameter in the registry
       filenamePrefix: {
         type: 'string',
         description: 'Prefix for saved files',
         nodeType: 'SaveImage',
-        paramPath: 'inputs.filename_prefix',
-        fallbackPath: 'widgets_values[0]'
+        paramPath: 'inputs.filename_prefix', // ComfyUI requires this as an input
+        fallbackPath: 'widgets_values[0]',
+        applyToNode: (node, value) => {
+          // Ensure inputs exists
+          if (!node.inputs) {
+            node.inputs = {};
+          }
+          
+          // Set the filename prefix in inputs.filename_prefix
+          node.inputs.filename_prefix = value;
+          
+          // Also set in widgets_values for compatibility
+          if (!node.widgets_values) {
+            node.widgets_values = [];
+          }
+          node.widgets_values[0] = value;
+          
+          return true;
+        }
       },
+      
       cfgScale: {
         type: 'number',
         description: 'CFG scale for guidance',
@@ -115,7 +134,7 @@ export async function loadWorkflow(workflowName) {
   
   try {
     // Dynamic import of the workflow JSON file
-    const workflowModule = await import(`../workflows/${registryEntry.file}`);
+    const workflowModule = await import(/* @vite-ignore */ `../workflows/${registryEntry.file}`);
     const workflowData = workflowModule.default;
     
     // Convert to API format if needed
@@ -333,20 +352,34 @@ export function applyParametersToWorkflow(workflow, parameters, parameterMapping
     for (const { id, node } of matchingNodes) {
       let applied = false;
       
-      // Try primary path first
-      if (mapping.paramPath) {
-        applied = setValueByPath(node, mapping.paramPath, paramValue);
+      // Use custom apply function if available
+      if (mapping.applyToNode) {
+        applied = mapping.applyToNode(node, paramValue);
+      } else {
+        // Try primary path first
+        if (mapping.paramPath) {
+          applied = setValueByPath(node, mapping.paramPath, paramValue);
+        }
+        
+        // If primary path failed, try fallback path
+        if (!applied && mapping.fallbackPath) {
+          applied = setValueByPath(node, mapping.fallbackPath, paramValue);
+        }
       }
       
-      // If primary path failed, try fallback path
-      if (!applied && mapping.fallbackPath) {
-        applied = setValueByPath(node, mapping.fallbackPath, paramValue);
-      }
-      
-      if (!applied) {
+      if (applied) {
+        console.log(`Applied parameter "${paramName}" to node ${id}`);
+      } else {
         console.warn(`Could not apply parameter "${paramName}" to node ${id}`);
       }
     }
+        // Add debug logging
+    console.log('SaveImage nodes before sending to ComfyUI:');
+    Object.entries(modifiedWorkflow).forEach(([id, node]) => {
+      if (node.class_type === 'SaveImage') {
+        console.log(`Node ${id}:`, JSON.stringify(node, null, 2));
+      }
+    });
   }
   
   return modifiedWorkflow;
@@ -394,6 +427,8 @@ export function generateTimestamp() {
  * @param {Object} parameters - The parameters to apply
  * @returns {Promise<Object>} - The complete payload with workflow and client_id
  */
+// Then update createWorkflowPayload to use these functions
+
 export async function createWorkflowPayload(workflowName, parameters) {
   const timestamp = generateTimestamp();
   
@@ -405,7 +440,18 @@ export async function createWorkflowPayload(workflowName, parameters) {
       : `output_${timestamp}`
   };
   
-  const workflow = await loadAndApplyParameters(workflowName, paramsWithTimestamp);
+  // Load and apply parameters
+  let workflow = await loadAndApplyParameters(workflowName, paramsWithTimestamp);
+  
+  // Fix any issues in SaveImage nodes
+  workflow = fixSaveImageNodes(workflow);
+  
+  // Validate SaveImage nodes
+  const isValid = validateSaveImageNodes(workflow);
+  
+  if (!isValid) {
+    console.warn('Workflow validation issues detected, but attempting to send anyway');
+  }
   
   return {
     workflow,
@@ -417,11 +463,112 @@ export async function createWorkflowPayload(workflowName, parameters) {
   };
 }
 
+
+/**
+ * Validates all SaveImage nodes in a workflow
+ * @param {Object} workflow - The workflow to validate
+ * @returns {boolean} - Returns true if all SaveImage nodes are valid
+ */
+// 3. Update the validateSaveImageNodes function to check that filename_prefix is in inputs
+export function validateSaveImageNodes(workflow) {
+  let isValid = true;
+  
+  Object.entries(workflow).forEach(([id, node]) => {
+    if (node.class_type === 'SaveImage') {
+      // Check that inputs exists and contains required properties
+      if (!node.inputs) {
+        console.error(`Node ${id}: SaveImage missing inputs object`);
+        isValid = false;
+      } else {
+        // Check that filename_prefix exists in inputs
+        if (!node.inputs.filename_prefix) {
+          console.error(`Node ${id}: SaveImage missing required input filename_prefix`);
+          isValid = false;
+        }
+        
+        // Check that images exists and has correct format
+        if (!node.inputs.images) {
+          console.error(`Node ${id}: SaveImage missing required input images`);
+          isValid = false;
+        } else if (!Array.isArray(node.inputs.images) || node.inputs.images.length !== 2) {
+          console.error(`Node ${id}: SaveImage has invalid images format: ${JSON.stringify(node.inputs.images)}`);
+          isValid = false;
+        } else if (node.inputs.images[1] !== 0) {
+          console.error(`Node ${id}: SaveImage has invalid output index in images: ${node.inputs.images[1]}, should be 0`);
+          isValid = false;
+        }
+      }
+      
+      // Check that widgets_values exists and matches inputs.filename_prefix
+      if (!node.widgets_values || !Array.isArray(node.widgets_values) || node.widgets_values.length === 0) {
+        console.error(`Node ${id}: SaveImage missing or invalid widgets_values`);
+        isValid = false;
+      } else if (node.inputs && node.inputs.filename_prefix && node.widgets_values[0] !== node.inputs.filename_prefix) {
+        console.error(`Node ${id}: SaveImage widgets_values[0] doesn't match inputs.filename_prefix`);
+        isValid = false;
+      }
+    }
+  });
+  
+  return isValid;
+}
+
+
+/**
+ * Fixes issues in SaveImage nodes
+ * @param {Object} workflow - The workflow to fix
+ * @returns {Object} - The fixed workflow
+ */
+// 2. Update the fixSaveImageNodes function
+export function fixSaveImageNodes(workflow) {
+  // Create a deep copy to avoid modifying the original
+  const fixedWorkflow = JSON.parse(JSON.stringify(workflow));
+  
+  // Fix all nodes with inputs.images to ensure correct output index
+  Object.entries(fixedWorkflow).forEach(([id, node]) => {
+    // Fix any node that has inputs.images array
+    if (node.inputs && node.inputs.images && Array.isArray(node.inputs.images) && node.inputs.images.length === 2) {
+      // Always set output index to 0 to avoid "tuple index out of range" errors
+      node.inputs.images = [node.inputs.images[0], 0];
+    }
+    
+    // Additional fixes specifically for SaveImage nodes
+    if (node.class_type === 'SaveImage') {
+      // Ensure filename_prefix is in inputs and matches widgets_values[0]
+      if (!node.inputs) {
+        node.inputs = {};
+      }
+      
+      // Get the filename prefix from widgets_values[0] if it exists
+      if (node.widgets_values && node.widgets_values.length > 0) {
+        node.inputs.filename_prefix = node.widgets_values[0];
+      } else if (!node.inputs.filename_prefix) {
+        // Default fallback if no prefix is found
+        node.inputs.filename_prefix = "output";
+        
+        // Also set widgets_values for consistency
+        if (!node.widgets_values) {
+          node.widgets_values = [];
+        }
+        node.widgets_values[0] = "output";
+      }
+    }
+  });
+  
+  return fixedWorkflow;
+}
+
+
+
+
+// Update default export to include the new functions
 export default {
   workflowRegistry,
   loadWorkflow,
   findNodesByType,
   applyParameters,
   loadAndApplyParameters,
-  createWorkflowPayload
+  createWorkflowPayload,
+  validateSaveImageNodes,
+  fixSaveImageNodes
 };
