@@ -142,12 +142,17 @@ const SupabaseService = {
    * @returns {string} - Public URL
    */
   getPublicUrl(bucket, path) {
-    const { data } = supabase
-      .storage
-      .from(bucket)
-      .getPublicUrl(path);
-      
-    return data.publicUrl;
+    try {
+      const { data } = supabase
+        .storage
+        .from(bucket)
+        .getPublicUrl(path);
+        
+      return data.publicUrl;
+    } catch (error) {
+      console.error("Error getting public URL:", error);
+      throw error;
+    }
   },
   
   /**
@@ -238,143 +243,204 @@ const SupabaseService = {
   },
   
   /**
-   * Get assets for a session
-   * @param {string} sessionId - Session ID
-   * @returns {Promise<Array>} - Session assets
+   * Get all assets with proper formatting and filtering
+   * @param {Object} options - Filter options
+   * @returns {Promise<Array>} - List of assets
    */
-  async getSessionAssets(sessionId) {
+  async getAssets(options = {}) {
     try {
-      const { data, error } = await supabase
-        .from('session_assets')
-        .select(`
-          asset_id,
-          assets:asset_id (
-            id,
-            asset_type,
-            storage_path,
-            parent_asset_id,
-            status,
-            metadata,
-            created_at
-          )
-        `)
-        .eq('session_id', sessionId);
-        
-      if (error) throw new Error(`Failed to get session assets: ${error.message}`);
+      console.log("Getting assets with options:", options);
       
-      // Transform the result to get just the assets
-      return data.map(item => item.assets);
-    } catch (error) {
-      console.error("Error getting session assets:", error);
-      throw error;
-    }
-  },
-  
-  /**
-   * Get all sessions with their assets
-   * @returns {Promise<Array>} - Array of sessions with assets
-   */
-  async getSessions() {
-    try {
-      const { data, error } = await supabase
-        .from('generation_sessions')
-        .select(`
-          *,
-          session_assets (
-            assets (
-              id,
-              asset_type,
-              storage_path,
-              metadata,
-              created_at
-            )
-          )
-        `)
-        .order('created_at', { ascending: false });
-
-      if (error) throw new Error(`Failed to get sessions: ${error.message}`);
-
-      // Transform the data to flatten the structure
-      return data.map(session => ({
-        ...session,
-        assets: session.session_assets?.map(sa => sa.assets) || []
-      }));
-    } catch (error) {
-      console.error("Error getting sessions:", error);
-      throw error;
-    }
-  },
-  
-  /**
-   * Get all assets matching a filter with URLs
-   * @param {Object} filter - Filter criteria
-   * @returns {Promise<Array>} - Filtered assets with URLs
-   */
-  async getAssets(filter = {}) {
-    try {
       let query = supabase
         .from('assets')
-        .select('*');
+        .select('*, traits:asset_traits(traits:trait_id(*))');
         
       // Apply filters if provided
-      if (filter.assetType) {
-        query = query.eq('asset_type', filter.assetType);
+      if (options.assetType) {
+        query = query.eq('asset_type', options.assetType);
       }
       
-      // Apply sorting
-      switch (filter.sortBy) {
-        case 'oldest':
-          query = query.order('created_at', { ascending: true });
-          break;
-        case 'name':
-          query = query.order('metadata->prompt', { ascending: true });
-          break;
-        case 'name_desc':
-          query = query.order('metadata->prompt', { ascending: false });
-          break;
-        case 'newest':
-        default:
-          query = query.order('created_at', { ascending: false });
+      if (options.sessionId) {
+        query = query.eq('session_id', options.sessionId);
       }
+      
+      if (options.parentId) {
+        query = query.eq('parent_asset_id', options.parentId);
+      }
+      
+      if (options.status) {
+        query = query.eq('status', options.status);
+      }
+      
+      // Order by creation date, newest first
+      query = query.order('created_at', { ascending: false });
       
       const { data, error } = await query;
       
-      if (error) throw new Error(`Failed to get assets: ${error.message}`);
+      if (error) {
+        console.error("Error fetching assets:", error);
+        throw new Error(`Failed to fetch assets: ${error.message}`);
+      }
       
-      // Add URLs to assets
-      const assetsWithUrls = await Promise.all(data.map(async (asset) => {
-        try {
-          if (asset.storage_path) {
-            const [bucket, ...pathParts] = asset.storage_path.split('/');
-            const path = pathParts.join('/');
-            
-            // Try public URL first
-            let url = this.getPublicUrl(bucket, path);
-            
-            // If not public, try signed URL
-            if (!url) {
-              url = await this.getSignedUrl(bucket, path);
-            }
-            
-            return { ...asset, url };
-          }
-          return asset;
-        } catch (err) {
-          console.warn(`Warning: Could not get URL for asset ${asset.id}:`, err);
-          return asset;
-        }
-      }));
-      
-      return assetsWithUrls;
+      console.log(`Retrieved ${data.length} assets`);
+      return data;
     } catch (error) {
-      console.error("Error getting assets:", error);
+      console.error("Error in getAssets:", error);
       throw error;
     }
   },
   
   /**
-   * Get a signed URL for a private file
-   * @param {string} bucket - Storage bucket name
+   * Get a single asset by ID with related data
+   * @param {string} id - Asset ID
+   * @returns {Promise<Object>} - Asset with related data
+   */
+  async getAsset(id) {
+    try {
+      console.log(`Getting asset with ID: ${id}`);
+      
+      const { data, error } = await supabase
+        .from('assets')
+        .select(`
+          *,
+          traits:asset_traits(traits:trait_id(*)),
+          parent:parent_asset_id(*),
+          children:assets!parent_asset_id(*)
+        `)
+        .eq('id', id)
+        .single();
+        
+      if (error) {
+        console.error(`Error fetching asset ${id}:`, error);
+        throw new Error(`Failed to fetch asset: ${error.message}`);
+      }
+      
+      console.log("Retrieved asset:", data);
+      return data;
+    } catch (error) {
+      console.error(`Error in getAsset(${id}):`, error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Get all sessions with improved error handling
+   * @returns {Promise<Array>} - List of sessions
+   */
+  async getSessions() {
+    try {
+      console.log("Getting all sessions");
+      
+      const { data, error } = await supabase
+        .from('generation_sessions')
+        .select('*')
+        .order('created_at', { ascending: false });
+        
+      if (error) {
+        console.error("Error fetching sessions:", error);
+        throw new Error(`Failed to fetch sessions: ${error.message}`);
+      }
+      
+      console.log(`Retrieved ${data.length} sessions`);
+      return data;
+    } catch (error) {
+      console.error("Error in getSessions:", error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Get all assets for a specific session
+   * @param {string} sessionId - Session ID
+   * @returns {Promise<Array>} - List of assets belonging to the session
+   */
+  async getSessionAssets(sessionId) {
+    try {
+      console.log(`Getting assets for session ${sessionId}`);
+      
+      const { data, error } = await supabase
+        .from('session_assets')
+        .select(`
+          assets:asset_id(*)
+        `)
+        .eq('session_id', sessionId);
+        
+      if (error) {
+        console.error(`Error fetching assets for session ${sessionId}:`, error);
+        throw new Error(`Failed to fetch session assets: ${error.message}`);
+      }
+      
+      // Transform the result to get just the assets
+      const assets = data.map(item => item.assets).filter(Boolean);
+      console.log(`Retrieved ${assets.length} assets for session ${sessionId}`);
+      
+      return assets;
+    } catch (error) {
+      console.error(`Error in getSessionAssets(${sessionId}):`, error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Get download URL for an asset in Supabase storage
+   * This tries multiple methods to get a usable URL
+   * @param {string} storagePath - Full storage path (bucket/path)
+   * @returns {Promise<string>} - URL for accessing the file
+   */
+  async getDownloadUrl(storagePath) {
+    try {
+      console.log(`Getting download URL for ${storagePath}`);
+      
+      // Extract bucket and path
+      const [bucket, ...pathParts] = storagePath.split('/');
+      const path = pathParts.join('/');
+      
+      if (!bucket || !path) {
+        throw new Error('Invalid storage path format');
+      }
+      
+      // Try signed URL first (works for both public and private buckets)
+      try {
+        const { data, error } = await supabase
+          .storage
+          .from(bucket)
+          .createSignedUrl(path, 3600); // 1 hour expiry
+          
+        if (error) {
+          console.warn(`Could not create signed URL: ${error.message}`);
+        } else if (data && data.signedUrl) {
+          console.log("Got signed URL:", data.signedUrl);
+          return data.signedUrl;
+        }
+      } catch (signedUrlError) {
+        console.warn("Error creating signed URL:", signedUrlError);
+      }
+      
+      // Try public URL as fallback
+      try {
+        const { data } = supabase
+          .storage
+          .from(bucket)
+          .getPublicUrl(path);
+          
+        if (data && data.publicUrl) {
+          console.log("Got public URL:", data.publicUrl);
+          return data.publicUrl;
+        }
+      } catch (publicUrlError) {
+        console.warn("Error getting public URL:", publicUrlError);
+      }
+      
+      throw new Error('Could not generate URL for asset');
+    } catch (error) {
+      console.error(`Error in getDownloadUrl(${storagePath}):`, error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Generate a signed URL for accessing a private file
+   * @param {string} bucket - Storage bucket
    * @param {string} path - File path within bucket
    * @param {number} expiresIn - Expiration time in seconds
    * @returns {Promise<string>} - Signed URL
@@ -390,69 +456,56 @@ const SupabaseService = {
       
       return data.signedUrl;
     } catch (error) {
-      console.error("Error creating signed URL:", error);
+      console.error(`Error in getSignedUrl(${bucket}/${path}):`, error);
       throw error;
     }
   },
   
   /**
-   * Get an asset by ID
-   * @param {string} assetId - Asset ID
-   * @returns {Promise<Object>} - Asset data
+   * Check if the current Supabase connection is valid
+   * @returns {Promise<boolean>} - Whether the connection is valid
    */
-  async getAssetById(assetId) {
+  async checkConnection() {
     try {
-      const { data, error } = await supabase
-        .from('assets')
-        .select('*')
-        .eq('id', assetId)
-        .single();
+      const { data, error } = await supabase.auth.getSession();
+      
+      if (error) {
+        console.error("Supabase connection error:", error);
+        return false;
+      }
+      
+      return true;
+    } catch (error) {
+      console.error("Error checking Supabase connection:", error);
+      return false;
+    }
+  },
+  
+  /**
+   * Get traits by type with improved error handling
+   * @param {string} traitType - Type of traits to filter by (optional)
+   * @returns {Promise<Array>} - List of traits
+   */
+  async getTraits(traitType = null) {
+    try {
+      let query = supabase
+        .from('traits')
+        .select('*');
         
-      if (error) throw new Error(`Failed to get asset: ${error.message}`);
+      if (traitType) {
+        query = query.eq('trait_type', traitType);
+      }
+      
+      const { data, error } = await query;
+      
+      if (error) {
+        console.error("Error fetching traits:", error);
+        throw new Error(`Failed to fetch traits: ${error.message}`);
+      }
       
       return data;
     } catch (error) {
-      console.error("Error getting asset:", error);
-      throw error;
-    }
-  },
-  
-  /**
-   * Delete an asset and its file
-   * @param {string} assetId - Asset ID
-   * @returns {Promise<void>}
-   */
-  async deleteAsset(assetId) {
-    try {
-      // First get the asset to get its storage path
-      const asset = await this.getAssetById(assetId);
-      
-      if (asset && asset.storage_path) {
-        // Extract bucket and path from storage_path (format: "bucket/path")
-        const [bucket, ...pathParts] = asset.storage_path.split('/');
-        const path = pathParts.join('/');
-        
-        // Delete the file from storage
-        const { error: storageError } = await supabase
-          .storage
-          .from(bucket)
-          .remove([path]);
-          
-        if (storageError) {
-          console.warn(`Warning: Could not delete file from storage: ${storageError.message}`);
-          // Continue with database deletion even if file deletion fails
-        }
-      }
-      
-      // Delete the asset from the database
-      const { error: dbError } = await supabase
-        .from('assets')
-        .delete()
-        .eq('id', assetId);
-        
-      if (dbError) throw new Error(`Failed to delete asset from database: ${dbError.message}`);
-    } catch (error) {
-      console.error("Error deleting asset:", error);
+      console.error("Error in getTraits:", error);
       throw error;
     }
   }

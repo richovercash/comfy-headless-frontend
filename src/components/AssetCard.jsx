@@ -110,16 +110,7 @@ const AssetMetadata = styled.div`
   color: #666;
 `;
 
-const CardContainer = styled.div`
-  cursor: pointer;
-  transition: transform 0.2s;
-  
-  &:hover {
-    transform: translateY(-4px);
-  }
-`;
-
-const AssetCard = ({ asset, onClick }) => {
+const AssetCard = ({ asset }) => {
   const [imageUrl, setImageUrl] = useState(null);
   const [traits, setTraits] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -229,40 +220,45 @@ const AssetCard = ({ asset, onClick }) => {
       : metadata.prompt;
   };
 
-  const handleClick = (e) => {
-    // Prevent the link click from triggering when clicking the card
-    e.preventDefault();
-    onClick(asset);
-  };
-
   return (
-    <CardContainer onClick={handleClick}>
-      <Card>
-        <AssetType>{getAssetTypeLabel(asset.asset_type)}</AssetType>
+    <Card>
+      <AssetType>{getAssetTypeLabel(asset.asset_type)}</AssetType>
+      
+      {loading ? (
+        <ImagePlaceholder>Loading asset...</ImagePlaceholder>
+      ) : error ? (
+        <ImagePlaceholder>Could not load asset</ImagePlaceholder>
+      ) : (
+        imageUrl && ['image_2d', 'orthogonal_view'].includes(asset.asset_type) && (
+          <AssetImage src={imageUrl} alt={`Asset ${asset.id}`} />
+        )
+      )}
+      
+      <AssetInfo>
+        <AssetTitle>
+          {getPromptExcerpt(asset.metadata)}
+        </AssetTitle>
         
-        {loading ? (
-          <ImagePlaceholder>Loading asset...</ImagePlaceholder>
-        ) : error ? (
-          <ImagePlaceholder>Could not load asset</ImagePlaceholder>
-        ) : (
-          imageUrl && (
-            <AssetImage src={imageUrl} alt={`Asset ${asset.id}`} />
-          )
+        <AssetMetadata>
+          Created: {formatDate(asset.created_at)}
+        </AssetMetadata>
+        
+        {traits.length > 0 && (
+          <TraitsList>
+            {traits.slice(0, 3).map(trait => (
+              <TraitTag key={trait.id}>
+                {trait.trait_value}
+              </TraitTag>
+            ))}
+            {traits.length > 3 && <TraitTag>+{traits.length - 3} more</TraitTag>}
+          </TraitsList>
         )}
         
-        <AssetInfo>
-          <AssetTitle>
-            {getPromptExcerpt(asset.metadata)}
-          </AssetTitle>
-          
-          <AssetMetadata>
-            Created: {formatDate(asset.created_at)}
-          </AssetMetadata>
-          
-          {error && <ErrorMessage>{error}</ErrorMessage>}
-        </AssetInfo>
-      </Card>
-    </CardContainer>
+        {error && <ErrorMessage>{error}</ErrorMessage>}
+        
+        <ViewLink to={`/assets/${asset.id}`}>View Details</ViewLink>
+      </AssetInfo>
+    </Card>
   );
 };
 
