@@ -1,295 +1,413 @@
 // src/components/ComfyUITroubleshooter.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
-import ComfyService from '../services/comfyService';
-import { validateWorkflow } from '../utils/workflowConverter';
-
-const TroubleshooterContainer = styled.div`
-  background-color: #f5f5f5;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  padding: 20px;
-  margin-bottom: 20px;
-`;
-
-const ButtonGroup = styled.div`
-  display: flex;
-  gap: 10px;
-  margin-bottom: 15px;
-`;
-
-const Button = styled.button`
-  padding: 8px 16px;
-  background-color: ${props => props.secondary ? '#6c757d' : '#007bff'};
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  
-  &:hover {
-    background-color: ${props => props.secondary ? '#5a6268' : '#0069d9'};
-  }
-  
-  &:disabled {
-    background-color: #cccccc;
-    cursor: not-allowed;
-  }
-`;
-
-const ResultContainer = styled.div`
-  margin-top: 15px;
-  padding: 15px;
-  background-color: ${props => props.success ? '#d4edda' : '#f8d7da'};
-  border: 1px solid ${props => props.success ? '#c3e6cb' : '#f5c6cb'};
-  border-radius: 4px;
-  color: ${props => props.success ? '#155724' : '#721c24'};
-`;
-
-const LogViewer = styled.pre`
-  background-color: #222;
-  color: #eee;
-  padding: 10px;
-  border-radius: 4px;
-  max-height: 300px;
-  overflow-y: auto;
-  font-family: 'Courier New', monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
-`;
-
-const CheckList = styled.ul`
-  list-style-type: none;
-  padding: 0;
-  
-  li {
-    margin-bottom: 8px;
-    padding-left: 25px;
-    position: relative;
-    
-    &:before {
-      content: "";
-      display: inline-block;
-      width: 16px;
-      height: 16px;
-      margin-right: 10px;
-      background-color: ${props => props.checked ? '#28a745' : '#dc3545'};
-      border-radius: 50%;
-      position: absolute;
-      left: 0;
-      top: 2px;
-    }
-  }
-`;
+import axios from 'axios';
+import { API_BASE_URL } from '../services/comfyService';
 
 /**
- * A component for diagnosing and troubleshooting ComfyUI integration issues
+ * A component to help diagnose and fix ComfyUI connection issues
  */
 const ComfyUITroubleshooter = () => {
-  const [isRunning, setIsRunning] = useState(false);
-  const [results, setResults] = useState(null);
-  const [log, setLog] = useState([]);
-  const [step, setStep] = useState(1);
+  const [systemInfo, setSystemInfo] = useState(null);
+  const [nodeInfo, setNodeInfo] = useState(null);
+  const [apiStatus, setApiStatus] = useState({ checking: false, status: null });
+  const [modelStatus, setModelStatus] = useState({ checking: false, models: [] });
+  const [urlLoaderStatus, setUrlLoaderStatus] = useState({ checking: false, status: null });
   
-  const addLog = (message, type = 'info') => {
-    setLog(prev => [...prev, { message, type, timestamp: new Date().toISOString() }]);
-  };
+  useEffect(() => {
+    // Initial status check on mount
+    checkApiStatus();
+  }, []);
   
-  const runSystemCheck = async () => {
-    setIsRunning(true);
-    setResults(null);
-    setLog([]);
-    setStep(1);
+  /**
+   * Check if the ComfyUI API is accessible
+   */
+  const checkApiStatus = async () => {
+    setApiStatus({ checking: true, status: null });
     
     try {
-      addLog('Starting ComfyUI system check...', 'info');
+      const response = await axios.get(`${API_BASE_URL}/system_stats`, { timeout: 5000 });
+      setApiStatus({ checking: false, status: 'connected', details: response.data });
+      setSystemInfo(response.data);
+    } catch (error) {
+      console.error("Error checking ComfyUI API:", error);
+      setApiStatus({ 
+        checking: false, 
+        status: 'error', 
+        details: error.message || 'Unknown error'
+      });
+    }
+  };
+  
+  /**
+   * Check if required models are available
+   */
+  const checkModels = async () => {
+    setModelStatus({ checking: true, models: [] });
+    
+    try {
+      const response = await axios.get(`${API_BASE_URL}/object_info`, { timeout: 8000 });
       
-      // Step 1: Check connection
-      addLog('Step 1: Testing basic connection to ComfyUI server...', 'info');
-      setStep(1);
-      
-      try {
-        const connectionResult = await ComfyService.checkConnectionOnly();
+      if (response.data && response.data.CheckpointLoaderSimple) {
+        // Get the list of available models from the checkpoint loader
+        const modelsData = response.data.CheckpointLoaderSimple.input.required.ckpt_name;
         
-        if (connectionResult.success) {
-          addLog('✅ Connection to ComfyUI server successful!', 'success');
-          if (connectionResult.data) {
-            addLog(`System info: ${JSON.stringify(connectionResult.data, null, 2)}`, 'info');
-          }
-        } else {
-          addLog(`❌ Connection failed: ${connectionResult.error?.message || 'Unknown error'}`, 'error');
-          setResults({
-            success: false,
-            message: 'Could not connect to ComfyUI server. Check if ComfyUI is running and accessible.'
+        if (modelsData && modelsData.options) {
+          const availableModels = modelsData.options.map(model => ({
+            name: model,
+            isFlux: model.toLowerCase().includes('flux')
+          }));
+          
+          setModelStatus({ 
+            checking: false, 
+            models: availableModels,
+            hasFluxModel: availableModels.some(model => model.isFlux)
           });
-          setIsRunning(false);
+          
           return;
         }
-      } catch (error) {
-        addLog(`❌ Connection error: ${error.message}`, 'error');
-        setResults({
-          success: false,
-          message: `Connection error: ${error.message}. Check if ComfyUI is running and the URL is correct.`
-        });
-        setIsRunning(false);
-        return;
       }
       
-      // Step 2: Try to list available nodes
-      addLog('Step 2: Testing API access to ComfyUI server...', 'info');
-      setStep(2);
-      
-      try {
-        addLog('Fetching available node types from ComfyUI...', 'info');
-        const nodeTypes = await ComfyService.getNodeTypes();
-        
-        if (nodeTypes) {
-          const nodeCount = Object.keys(nodeTypes).length;
-          addLog(`✅ Successfully retrieved ${nodeCount} node types from ComfyUI`, 'success');
-          
-          // Check for specific nodes we need
-          const requiredNodes = ['UNETLoader', 'DualCLIPLoader', 'VAELoader', 'CLIPTextEncode', 'KSampler', 'VAEDecode', 'SaveImage'];
-          const missingNodes = [];
-          
-          for (const node of requiredNodes) {
-            if (!nodeTypes[node]) {
-              missingNodes.push(node);
-            }
-          }
-          
-          if (missingNodes.length > 0) {
-            addLog(`⚠️ Warning: Some required nodes are missing: ${missingNodes.join(', ')}`, 'warning');
-          } else {
-            addLog('✅ All required nodes are available in your ComfyUI installation', 'success');
-          }
-          
-          // Check DualCLIPLoader type parameter
-          if (nodeTypes['DualCLIPLoader']) {
-            const typeInput = nodeTypes['DualCLIPLoader'].input?.required?.type || 
-                             nodeTypes['DualCLIPLoader'].input?.optional?.type;
-            
-            if (typeInput) {
-              const validTypes = typeInput.options || [];
-              addLog(`DualCLIPLoader type parameter accepts: ${validTypes.join(', ')}`, 'info');
-              
-              if (validTypes.includes('flux')) {
-                addLog('✅ DualCLIPLoader supports "flux" type value', 'success');
-              } else {
-                addLog('⚠️ Warning: DualCLIPLoader doesn\'t support "flux" type value', 'warning');
-              }
-            }
-          }
-        } else {
-          addLog('❌ Failed to retrieve node types', 'error');
-        }
-      } catch (error) {
-        addLog(`❌ Error retrieving node types: ${error.message}`, 'error');
-      }
-      
-      // Step 3: Test a minimal flux workflow
-      addLog('Step 3: Creating a minimal test workflow...', 'info');
-      setStep(3);
-      
-      try {
-        // Create a minimal flux workflow based on the available nodes
-        const fluxResult = ComfyService.createFluxWorkflow({
-          prompt: "Test prompt",
-          steps: 20,
-          filenamePrefix: "test_"
-        });
-        
-        if (fluxResult && fluxResult.workflow && typeof fluxResult.timestamp === 'number') {
-          const fluxValid = validateWorkflow(fluxResult.workflow);
-          
-          if (fluxValid.isValid) {
-            addLog('✅ Flux workflow generation successful!', 'success');
-            
-            // Print the workflow for debugging
-            addLog(`Generated workflow: ${JSON.stringify(fluxResult.workflow, null, 2)}`, 'info');
-            
-            addLog('Note: We won\'t actually execute the workflow to avoid potential errors', 'info');
-          } else {
-            addLog(`⚠️ Generated flux workflow has validation issues: ${fluxValid.errors.join(', ')}`, 'warning');
-          }
-        } else {
-          addLog('❌ Flux workflow generation failed with unexpected result', 'error');
-        }
-      } catch (error) {
-        addLog(`❌ Flux workflow generation error: ${error.message}`, 'error');
-      }
-      
-      // All tests passed!
-      addLog('🎉 All tests passed! Your ComfyUI integration should be working correctly.', 'success');
-      setResults({
-        success: true,
-        message: 'All ComfyUI integration tests passed successfully!'
+      // If we couldn't find the models in the expected place
+      setModelStatus({ 
+        checking: false, 
+        models: [],
+        error: 'Could not retrieve model list from ComfyUI'
       });
+      
     } catch (error) {
-      addLog(`❌ Unexpected error during diagnostics: ${error.message}`, 'error');
-      setResults({
-        success: false,
-        message: `Unexpected error: ${error.message}`
+      console.error("Error checking models:", error);
+      setModelStatus({ 
+        checking: false, 
+        models: [],
+        error: error.message || 'Unknown error'
       });
-    } finally {
-      setIsRunning(false);
+    }
+  };
+  
+  /**
+   * Check if URL loader nodes are available
+   */
+  const checkUrlLoader = async () => {
+    setUrlLoaderStatus({ checking: true, status: null });
+    
+    try {
+      const response = await axios.get(`${API_BASE_URL}/object_info`, { timeout: 8000 });
+      
+      const hasUrlLoader = !!(response.data && (
+        response.data.LoadImageFromUrlOrPath || 
+        response.data.AnyURL || 
+        response.data.LoadImageFromCivitai
+      ));
+      
+      setUrlLoaderStatus({ 
+        checking: false, 
+        status: hasUrlLoader ? 'available' : 'missing',
+        details: hasUrlLoader 
+          ? 'URL loader nodes are available' 
+          : 'URL loader nodes are missing. Install ComfyUI-URL-Loader extension.'
+      });
+      
+      // Also store complete node info for display
+      setNodeInfo(response.data);
+      
+    } catch (error) {
+      console.error("Error checking URL loader:", error);
+      setUrlLoaderStatus({ 
+        checking: false, 
+        status: 'error',
+        details: error.message || 'Unknown error'
+      });
+    }
+  };
+  
+  /**
+   * Helper to test a URL to see if it's accessible from ComfyUI
+   */
+  const testImageUrl = async () => {
+    const testUrl = prompt("Enter a Supabase image URL to test:", "");
+    
+    if (!testUrl) return;
+    
+    try {
+      // First check if the URL is directly accessible
+      const browserCheckResult = await fetch(testUrl, { method: 'HEAD' });
+      const isBrowserAccessible = browserCheckResult.ok;
+      
+      // Now try to load it through ComfyUI
+      const workflowToTest = {
+        "1": {
+          "class_type": "LoadImageFromUrlOrPath",
+          "inputs": {
+            "url": testUrl
+          }
+        },
+        "2": {
+          "class_type": "PreviewImage",
+          "inputs": {
+            "images": ["1", 0]
+          }
+        }
+      };
+      
+      const response = await axios.post(`${API_BASE_URL}/prompt`, {
+        prompt: workflowToTest,
+        client_id: "troubleshooter-" + Date.now()
+      });
+      
+      alert(`
+URL Test Results:
+- Browser direct access: ${isBrowserAccessible ? 'Success' : 'Failed'}
+- ComfyUI access: ${response.data && !response.data.error ? 'Successfully queued' : 'Failed'}
+- Prompt ID: ${response.data?.prompt_id || 'N/A'}
+
+Check ComfyUI interface to see if image loaded successfully.
+      `);
+      
+    } catch (error) {
+      alert(`Error testing URL: ${error.message}`);
     }
   };
   
   return (
     <TroubleshooterContainer>
-      <h2>ComfyUI Integration Troubleshooter</h2>
+      <h3>ComfyUI Connection Troubleshooter</h3>
       
-      <ButtonGroup>
-        <Button onClick={runSystemCheck} disabled={isRunning}>
-          {isRunning ? 'Running Diagnostics...' : 'Run System Check'}
+      <SectionContainer>
+        <SectionTitle>1. API Connection</SectionTitle>
+        <StatusDisplay status={apiStatus.status}>
+          {apiStatus.checking ? 'Checking connection...' : 
+            apiStatus.status === 'connected' ? 'Connected to ComfyUI API ✅' : 
+            'Connection failed ❌'}
+        </StatusDisplay>
+        
+        <Button onClick={checkApiStatus} disabled={apiStatus.checking}>
+          {apiStatus.checking ? 'Checking...' : 'Check API Connection'}
         </Button>
-        <Button secondary onClick={() => setLog([])} disabled={isRunning || log.length === 0}>
-          Clear Log
+        
+        {apiStatus.status === 'connected' && systemInfo && (
+          <InfoDisplay>
+            <p><strong>System Information:</strong></p>
+            <ul>
+              <li>Platform: {systemInfo.platform || 'Unknown'}</li>
+              <li>CPU Utilization: {systemInfo.cpu?.usage ? `${systemInfo.cpu.usage.toFixed(1)}%` : 'Unknown'}</li>
+              <li>Total RAM: {systemInfo.ram?.total ? `${(systemInfo.ram.total / (1024 * 1024 * 1024)).toFixed(1)} GB` : 'Unknown'}</li>
+              <li>Available RAM: {systemInfo.ram?.free ? `${(systemInfo.ram.free / (1024 * 1024 * 1024)).toFixed(1)} GB` : 'Unknown'}</li>
+              {systemInfo.cuda && (
+                <li>CUDA: {systemInfo.cuda.name || 'Available'} - {systemInfo.cuda.vram_free ? `${(systemInfo.cuda.vram_free / (1024 * 1024 * 1024)).toFixed(1)} GB Free` : 'Unknown VRAM'}</li>
+              )}
+            </ul>
+          </InfoDisplay>
+        )}
+        
+        {apiStatus.status === 'error' && (
+          <ErrorMessage>
+            <p>Error connecting to ComfyUI API: {apiStatus.details}</p>
+            <p>Make sure:</p>
+            <ul>
+              <li>ComfyUI is running at: {API_BASE_URL}</li>
+              <li>CORS is enabled: start ComfyUI with <code>--enable-cors-header="*"</code></li>
+              <li>Your network allows connections to this address</li>
+            </ul>
+          </ErrorMessage>
+        )}
+      </SectionContainer>
+      
+      <SectionContainer>
+        <SectionTitle>2. Model Availability</SectionTitle>
+        <StatusDisplay status={modelStatus.hasFluxModel ? 'success' : 'pending'}>
+          {modelStatus.checking ? 'Checking models...' : 
+            modelStatus.error ? 'Error checking models ❌' : 
+            modelStatus.hasFluxModel ? 'Flux model available ✅' : 
+            'Flux model not detected ⚠️'}
+        </StatusDisplay>
+        
+        <Button onClick={checkModels} disabled={modelStatus.checking}>
+          {modelStatus.checking ? 'Checking...' : 'Check Model Availability'}
         </Button>
-      </ButtonGroup>
+        
+        {modelStatus.models.length > 0 && (
+          <InfoDisplay>
+            <p><strong>Available Models:</strong></p>
+            <ul>
+              {modelStatus.models.map((model, index) => (
+                <li key={index}>
+                  {model.name} {model.isFlux ? '✅ (Flux)' : ''}
+                </li>
+              ))}
+            </ul>
+          </InfoDisplay>
+        )}
+        
+        {modelStatus.error && (
+          <ErrorMessage>
+            <p>Error checking models: {modelStatus.error}</p>
+          </ErrorMessage>
+        )}
+      </SectionContainer>
       
-      {log.length > 0 && (
-        <LogViewer>
-          {log.map((entry, index) => (
-            <div key={index} style={{ color: entry.type === 'error' ? '#ff6b6b' : entry.type === 'success' ? '#51cf66' : '#f8f9fa' }}>
-              [{entry.timestamp.split('T')[1].split('.')[0]}] {entry.message}
-            </div>
-          ))}
-        </LogViewer>
-      )}
+      <SectionContainer>
+        <SectionTitle>3. URL Loader Nodes</SectionTitle>
+        <StatusDisplay status={urlLoaderStatus.status === 'available' ? 'success' : 'pending'}>
+          {urlLoaderStatus.checking ? 'Checking URL loaders...' : 
+            urlLoaderStatus.status === 'available' ? 'URL loader nodes available ✅' : 
+            urlLoaderStatus.status === 'missing' ? 'URL loader nodes missing ⚠️' : 
+            'URL loader status unknown ❓'}
+        </StatusDisplay>
+        
+        <Button onClick={checkUrlLoader} disabled={urlLoaderStatus.checking}>
+          {urlLoaderStatus.checking ? 'Checking...' : 'Check URL Loader Availability'}
+        </Button>
+        
+        {urlLoaderStatus.details && (
+          <InfoDisplay>
+            <p>{urlLoaderStatus.details}</p>
+            {urlLoaderStatus.status === 'missing' && (
+              <div>
+                <p>Install URL loader nodes with these commands:</p>
+                <pre>
+                  cd ComfyUI/custom_nodes{'\n'}
+                  git clone https://github.com/sprite-puppet/comfyui-url-loader
+                </pre>
+                <p>Then restart ComfyUI</p>
+              </div>
+            )}
+          </InfoDisplay>
+        )}
+        
+        {urlLoaderStatus.status === 'available' && (
+          <Button onClick={testImageUrl}>
+            Test Image URL Access
+          </Button>
+        )}
+      </SectionContainer>
       
-      {results && (
-        <ResultContainer success={results.success}>
-          <h3>{results.success ? 'System Check Passed!' : 'System Check Failed'}</h3>
-          <p>{results.message}</p>
-        </ResultContainer>
-      )}
-      
-      <div style={{ marginTop: '20px' }}>
-        <h3>ComfyUI Integration Checklist</h3>
-        <CheckList>
-          <li style={{color: step > 0 ? '#28a745' : '#6c757d'}}>
-            Make sure ComfyUI server is running (URL: {ComfyService.API_BASE_URL})
-          </li>
-          <li style={{color: step > 1 ? '#28a745' : '#6c757d'}}>
-            ComfyUI API is accessible and can list available nodes
-          </li>
-          <li style={{color: step > 2 ? '#28a745' : '#6c757d'}}>
-            Can create a valid Flux workflow
-          </li>
-        </CheckList>
-      </div>
-      
-      <div style={{ marginTop: '20px' }}>
-        <h3>Common Issues</h3>
-        <ul>
-          <li><strong>CORS Issues:</strong> Make sure ComfyUI is launched with CORS enabled. Use <code>--enable-cors-header="*"</code> flag.</li>
-          <li><strong>Missing class_type:</strong> Check workflow format conversion for nodes missing the class_type property.</li>
-          <li><strong>Model Loading Errors:</strong> Ensure all required models are present in ComfyUI's models directory.</li>
-          <li><strong>Connection Timeout:</strong> Check if ComfyUI server is running on the correct port and is accessible.</li>
-        </ul>
-      </div>
+      <SectionContainer>
+        <SectionTitle>4. Troubleshooting Steps</SectionTitle>
+        <InfoDisplay>
+          <p><strong>If you're experiencing issues:</strong></p>
+          <ol>
+            <li>Make sure ComfyUI is running with <code>--enable-cors-header="*"</code></li>
+            <li>Check that your Supabase buckets are set to "Public" for input images</li>
+            <li>Install URL loader extensions for ComfyUI if needed</li>
+            <li>Ensure your flux model is installed in ComfyUI's models folder</li>
+            <li>Try a simpler workflow first before using advanced mode</li>
+          </ol>
+        </InfoDisplay>
+      </SectionContainer>
     </TroubleshooterContainer>
   );
 };
+
+// Styled components
+const TroubleshooterContainer = styled.div`
+  margin-top: 20px;
+  background-color: #f5f7f9;
+  border: 1px solid #e1e4e8;
+  border-radius: 6px;
+  padding: 20px;
+`;
+
+const SectionContainer = styled.div`
+  margin-bottom: 24px;
+  border-bottom: 1px solid #e1e4e8;
+  padding-bottom: 20px;
+  
+  &:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+  }
+`;
+
+const SectionTitle = styled.h4`
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: #24292e;
+`;
+
+const Button = styled.button`
+  background-color: #0366d6;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  margin: 8px 8px 8px 0;
+  cursor: pointer;
+  font-size: 0.9rem;
+  
+  &:hover {
+    background-color: #0258bd;
+  }
+  
+  &:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+  }
+`;
+
+const StatusDisplay = styled.div`
+  padding: 10px;
+  margin-bottom: 12px;
+  border-radius: 4px;
+  background-color: ${props => 
+    props.status === 'connected' || props.status === 'success' ? '#e6ffed' :
+    props.status === 'error' ? '#ffeef0' :
+    '#f6f8fa'};
+  border: 1px solid ${props => 
+    props.status === 'connected' || props.status === 'success' ? '#34d058' :
+    props.status === 'error' ? '#d73a49' :
+    '#e1e4e8'};
+  color: ${props => 
+    props.status === 'connected' || props.status === 'success' ? '#22863a' :
+    props.status === 'error' ? '#cb2431' :
+    '#24292e'};
+`;
+
+const InfoDisplay = styled.div`
+  background-color: #f6f8fa;
+  border: 1px solid #e1e4e8;
+  border-radius: 4px;
+  padding: 12px;
+  margin-top: 12px;
+  font-size: 0.9rem;
+  
+  p {
+    margin-top: 0;
+    margin-bottom: 8px;
+  }
+  
+  ul, ol {
+    margin-top: 0;
+    padding-left: 24px;
+  }
+  
+  pre {
+    background-color: #24292e;
+    color: #e1e4e8;
+    padding: 12px;
+    border-radius: 4px;
+    overflow-x: auto;
+  }
+`;
+
+const ErrorMessage = styled.div`
+  background-color: #ffeef0;
+  border: 1px solid #f9d0d0;
+  border-radius: 4px;
+  padding: 12px;
+  margin-top: 12px;
+  color: #86181d;
+  font-size: 0.9rem;
+  
+  p {
+    margin-top: 0;
+    margin-bottom: 8px;
+  }
+  
+  ul {
+    margin-top: 0;
+    padding-left: 24px;
+  }
+`;
 
 export default ComfyUITroubleshooter;

@@ -1,257 +1,401 @@
 // src/services/supabaseService.js
 import { createClient } from '@supabase/supabase-js';
 
+// Initialize Supabase client
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// Add near the top of your component or in a useEffect
-console.log("Supabase connection check:", 
-  supabase.auth.getSession().then(res => console.log("Session:", res))
-);
-// Add this line to export the supabase instance
-export { supabase };
-
-export const SupabaseService = {
-  /**
-   * Get all assets with optional filtering
-   * @param {Object} options - Filter options
-   * @param {string} options.assetType - Filter by asset type
-   * @param {string} options.sessionId - Filter by session ID
-   * @param {string} options.parentId - Filter by parent asset ID
-   */
-  async getAssets(options = {}) {
-    let query = supabase
-      .from('assets')
-      .select('*, traits:asset_traits(traits:trait_id(*))');
-
-    if (options.assetType) {
-      query = query.eq('asset_type', options.assetType);
-    }
-
-    if (options.sessionId) {
-      // This assumes you've added a session_id column to the assets table
-      query = query.eq('session_id', options.sessionId);
-    }
-
-    if (options.parentId) {
-      query = query.eq('parent_asset_id', options.parentId);
-    }
-
-    // Order by creation date, newest first
-    query = query.order('created_at', { ascending: false });
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error('Error fetching assets:', error);
-      throw error;
-    }
-
-    return data;
-  },
-
-  /**
-   * Get a single asset by ID with related data
-   * @param {string} id - Asset ID
-   */
-  async getAsset(id) {
-    const { data, error } = await supabase
-      .from('assets')
-      .select(`
-        *,
-        traits:asset_traits(traits:trait_id(*)),
-        parent:parent_asset_id(*),
-        children:assets!parent_asset_id(*)
-      `)
-      .eq('id', id)
-      .single();
-
-    if (error) {
-      console.error('Error fetching asset:', error);
-      throw error;
-    }
-
-    return data;
-  },
-
-  /**
-   * Get all generation sessions
-   */
-  async getSessions() {
-    const { data, error } = await supabase
-      .from('generation_sessions')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error fetching sessions:', error);
-      throw error;
-    }
-
-    return data;
-  },
-
-  /**
-   * Get session by ID with related assets
-   * @param {string} id - Session ID
-   */
-  async getSession(id) {
-    // Get the session
-    const { data: session, error: sessionError } = await supabase
-      .from('generation_sessions')
-      .select('*')
-      .eq('id', id)
-      .single();
-
-    if (sessionError) {
-      console.error('Error fetching session:', sessionError);
-      throw sessionError;
-    }
-
-    // Get the assets for this session
-    const { data: assets, error: assetsError } = await supabase
-      .from('assets')
-      .select('*, traits:asset_traits(traits:trait_id(*))')
-      .eq('session_id', id)
-      .order('created_at', { ascending: false });
-
-    if (assetsError) {
-      console.error('Error fetching session assets:', assetsError);
-      throw assetsError;
-    }
-
-    return {
-      ...session,
-      assets
-    };
-  },
-
+/**
+ * Service for interacting with Supabase database and storage
+ */
+const SupabaseService = {
   /**
    * Create a new generation session
-   * @param {Object} parameters - Session parameters
+   * @param {Object} sessionData - Session parameters
+   * @returns {Promise<Object>} - Created session data
    */
-  async createSession(parameters = {}) {
+  async createSession(sessionData) {
     try {
       const { data, error } = await supabase
         .from('generation_sessions')
-        .insert({
-          parameters,
+        .insert([{
+          parameters: sessionData,
           status: 'initiated'
-        })
-        .select()
-        .single();
-  
-      if (error) {
-        console.error('Error creating session:', error);
-        // Log detailed error information
-        console.error('Error code:', error.code);
-        console.error('Error message:', error.message);
-        console.error('Error details:', error.details);
-        throw error;
-      }
-  
-      return data;
-    } catch (err) {
-      console.error('Exception in createSession:', err);
-      throw err;
+        }])
+        .select();
+        
+      if (error) throw new Error(`Failed to create session: ${error.message}`);
+      
+      return data[0];
+    } catch (error) {
+      console.error("Error creating session:", error);
+      throw error;
     }
   },
-
+  
   /**
-   * Upload a file to Supabase storage
-   * @param {string} bucket - The storage bucket name
-   * @param {string} path - The file path within the bucket
-   * @param {File} file - The file to upload
-   * @returns {Promise<string>} - The full storage path
+   * Upload a file to Supabase storage with improved error handling
+   * @param {string} bucket - Storage bucket name
+   * @param {string} path - File path within bucket
+   * @param {File} file - File to upload
+   * @returns {Promise<Object>} - Upload result
    */
   async uploadFile(bucket, path, file) {
     try {
       console.log(`Uploading file to ${bucket}/${path}`);
       
-      // Skip bucket creation - buckets should be created manually in Supabase dashboard
+      // Ensure the bucket exists with correct permissions
+      await this.ensureBucketExists(bucket);
       
-      const { data, error } = await supabase.storage
+      // Upload the file
+      const { data, error } = await supabase
+        .storage
         .from(bucket)
-        .upload(path, file);
+        .upload(path, file, {
+          upsert: true,
+          cacheControl: '3600'
+        });
         
       if (error) {
-        console.error(`Error uploading to ${bucket}:`, error);
-        throw error;
+        console.error("Upload error:", error);
+        throw new Error(`Failed to upload file: ${error.message}`);
       }
       
-      console.log(`File uploaded successfully to ${bucket}/${path}`);
-      return `${bucket}/${path}`;
+      console.log("Upload successful:", data);
+      return data;
     } catch (error) {
-      console.error(`Error uploading file to ${bucket}/${path}:`, error);
-      throw error;
-    }
-  },
-
-  /**
-   * Store a depth map image
-   * @param {string} inputImagePath - Path to the input image
-   * @param {Blob} depthMapBlob - The depth map image blob
-   * @returns {Promise<string>} - Path to the stored depth map
-   */
-  async storeDepthMap(inputImagePath, depthMapBlob) {
-    try {
-      const filename = `depth_${Date.now()}.png`;
-      
-      // Upload to depth-maps bucket
-      await this.uploadFile('depth-maps', filename, depthMapBlob);
-      
-      return `depth-maps/${filename}`;
-    } catch (error) {
-      console.error('Error storing depth map:', error);
+      console.error("Error uploading file:", error);
       throw error;
     }
   },
   
   /**
-   * Get all traits, optionally filtered by type
-   * @param {string} traitType - Optional trait type to filter by
+   * Ensure a storage bucket exists with proper permissions
+   * @param {string} bucketName - Name of the bucket to create/check
+   * @param {boolean} isPublic - Whether the bucket should be public
+   * @returns {Promise<void>}
    */
-  async getTraits(traitType = null) {
-    let query = supabase
-      .from('traits')
-      .select('*');
-
-    if (traitType) {
-      query = query.eq('trait_type', traitType);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error('Error fetching traits:', error);
+  async ensureBucketExists(bucketName, isPublic = true) {
+    try {
+      console.log(`Checking if bucket '${bucketName}' exists`);
+      
+      // Check if bucket exists
+      const { data: buckets, error: listError } = await supabase.storage.listBuckets();
+      
+      if (listError) {
+        console.error("Error listing buckets:", listError);
+        // Try to create anyway
+      } else {
+        console.log("Buckets found:", buckets ? buckets.length : 0);
+        const bucketExists = buckets && buckets.some(b => b.name === bucketName);
+        
+        if (bucketExists) {
+          console.log(`Bucket '${bucketName}' already exists`);
+          
+          // If bucket exists, update it if needed
+          try {
+            const { error: updateError } = await supabase.storage.updateBucket(bucketName, {
+              public: isPublic
+            });
+            
+            if (updateError) {
+              console.warn(`Could not update bucket permissions: ${updateError.message}`);
+              // Continue anyway, this might be due to limited permissions
+            } else {
+              console.log(`Updated bucket '${bucketName}' to public=${isPublic}`);
+            }
+          } catch (updateErr) {
+            console.warn("Error updating bucket:", updateErr);
+            // Continue anyway
+          }
+          
+          return;
+        }
+      }
+      
+      // Create the bucket if it doesn't exist
+      console.log(`Creating storage bucket '${bucketName}'`);
+      
+      const { error: createError } = await supabase.storage.createBucket(bucketName, {
+        public: isPublic,
+        fileSizeLimit: 10485760 // 10MB
+      });
+      
+      if (createError) {
+        console.error("Error creating bucket:", createError);
+        throw new Error(`Failed to create bucket: ${createError.message}`);
+      }
+      
+      console.log(`Successfully created bucket '${bucketName}'`);
+    } catch (error) {
+      console.error("Error ensuring bucket exists:", error);
       throw error;
     }
-
-    return data;
   },
-
+  
   /**
-   * Get a signed URL for downloading an asset
-   * @param {string} assetPath - Storage path of the asset
+   * Get a public URL for a file in storage
+   * @param {string} bucket - Storage bucket name
+   * @param {string} path - File path within bucket
+   * @returns {string} - Public URL
    */
-  async getDownloadUrl(assetPath) {
-    // Parse storage path to get bucket and path
-    const [bucket, ...pathParts] = assetPath.split('/');
-    const path = pathParts.join('/');
-    
-    // Get signed URL
-    const { data, error } = await supabase
+  getPublicUrl(bucket, path) {
+    const { data } = supabase
       .storage
       .from(bucket)
-      .createSignedUrl(path, 60 * 60); // 1 hour expiry
+      .getPublicUrl(path);
       
-    if (error) {
+    return data.publicUrl;
+  },
+  
+  /**
+   * Create an asset record in the database
+   * @param {Object} assetData - Asset data
+   * @returns {Promise<Object>} - Created asset data
+   */
+  async createAsset(assetData) {
+    try {
+      console.log("Creating asset with data:", assetData);
+      
+      const { data, error } = await supabase
+        .from('assets')
+        .insert([assetData])
+        .select();
+        
+      if (error) {
+        console.error("Error inserting asset:", error);
+        throw new Error(`Failed to create asset: ${error.message}`);
+      }
+      
+      if (!data || data.length === 0) {
+        throw new Error('Asset was created but no data was returned');
+      }
+      
+      console.log("Asset created successfully:", data[0]);
+      return data[0];
+    } catch (error) {
+      console.error("Error creating asset:", error);
       throw error;
     }
-    
-    return data.signedUrl;
+  },
+  
+  /**
+   * Link an asset to a session
+   * @param {string} sessionId - Session ID
+   * @param {string} assetId - Asset ID
+   * @returns {Promise<void>}
+   */
+  async linkAssetToSession(sessionId, assetId) {
+    try {
+      console.log(`Linking asset ${assetId} to session ${sessionId}`);
+      
+      const { error } = await supabase
+        .from('session_assets')
+        .insert([{
+          session_id: sessionId,
+          asset_id: assetId
+        }]);
+        
+      if (error) {
+        console.error("Error linking asset to session:", error);
+        throw new Error(`Failed to link asset to session: ${error.message}`);
+      }
+      
+      console.log("Successfully linked asset to session");
+    } catch (error) {
+      console.error("Error linking asset to session:", error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Update a session's status
+   * @param {string} sessionId - Session ID
+   * @param {string} status - New status ('initiated', 'in_progress', 'completed', 'failed')
+   * @returns {Promise<void>}
+   */
+  async updateSessionStatus(sessionId, status) {
+    try {
+      console.log(`Updating session ${sessionId} status to ${status}`);
+      
+      const { error } = await supabase
+        .from('generation_sessions')
+        .update({ status })
+        .eq('id', sessionId);
+        
+      if (error) {
+        console.error("Error updating session status:", error);
+        throw new Error(`Failed to update session status: ${error.message}`);
+      }
+      
+      console.log("Successfully updated session status");
+    } catch (error) {
+      console.error("Error updating session status:", error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Get assets for a session
+   * @param {string} sessionId - Session ID
+   * @returns {Promise<Array>} - Session assets
+   */
+  async getSessionAssets(sessionId) {
+    try {
+      const { data, error } = await supabase
+        .from('session_assets')
+        .select(`
+          asset_id,
+          assets:asset_id (
+            id,
+            asset_type,
+            storage_path,
+            parent_asset_id,
+            status,
+            metadata,
+            created_at
+          )
+        `)
+        .eq('session_id', sessionId);
+        
+      if (error) throw new Error(`Failed to get session assets: ${error.message}`);
+      
+      // Transform the result to get just the assets
+      return data.map(item => item.assets);
+    } catch (error) {
+      console.error("Error getting session assets:", error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Get all assets matching a filter
+   * @param {Object} filter - Filter criteria
+   * @returns {Promise<Array>} - Filtered assets
+   */
+  async getAssets(filter = {}) {
+    try {
+      let query = supabase
+        .from('assets')
+        .select('*');
+        
+      // Apply filters if provided
+      if (filter.assetType) {
+        query = query.eq('asset_type', filter.assetType);
+      }
+      
+      if (filter.status) {
+        query = query.eq('status', filter.status);
+      }
+      
+      // Add order by created_at descending (newest first)
+      query = query.order('created_at', { ascending: false });
+      
+      // Apply pagination if provided
+      if (filter.limit) {
+        query = query.limit(filter.limit);
+      }
+      
+      if (filter.offset) {
+        query = query.range(filter.offset, filter.offset + (filter.limit || 10) - 1);
+      }
+      
+      const { data, error } = await query;
+      
+      if (error) throw new Error(`Failed to get assets: ${error.message}`);
+      
+      return data;
+    } catch (error) {
+      console.error("Error getting assets:", error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Get a signed URL for a private file
+   * @param {string} bucket - Storage bucket name
+   * @param {string} path - File path within bucket
+   * @param {number} expiresIn - Expiration time in seconds
+   * @returns {Promise<string>} - Signed URL
+   */
+  async getSignedUrl(bucket, path, expiresIn = 3600) {
+    try {
+      const { data, error } = await supabase
+        .storage
+        .from(bucket)
+        .createSignedUrl(path, expiresIn);
+        
+      if (error) throw new Error(`Failed to create signed URL: ${error.message}`);
+      
+      return data.signedUrl;
+    } catch (error) {
+      console.error("Error creating signed URL:", error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Get an asset by ID
+   * @param {string} assetId - Asset ID
+   * @returns {Promise<Object>} - Asset data
+   */
+  async getAssetById(assetId) {
+    try {
+      const { data, error } = await supabase
+        .from('assets')
+        .select('*')
+        .eq('id', assetId)
+        .single();
+        
+      if (error) throw new Error(`Failed to get asset: ${error.message}`);
+      
+      return data;
+    } catch (error) {
+      console.error("Error getting asset:", error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Delete an asset and its file
+   * @param {string} assetId - Asset ID
+   * @returns {Promise<void>}
+   */
+  async deleteAsset(assetId) {
+    try {
+      // First get the asset to get its storage path
+      const asset = await this.getAssetById(assetId);
+      
+      if (asset && asset.storage_path) {
+        // Extract bucket and path from storage_path (format: "bucket/path")
+        const [bucket, ...pathParts] = asset.storage_path.split('/');
+        const path = pathParts.join('/');
+        
+        // Delete the file from storage
+        const { error: storageError } = await supabase
+          .storage
+          .from(bucket)
+          .remove([path]);
+          
+        if (storageError) {
+          console.warn(`Warning: Could not delete file from storage: ${storageError.message}`);
+          // Continue with database deletion even if file deletion fails
+        }
+      }
+      
+      // Delete the asset from the database
+      const { error: dbError } = await supabase
+        .from('assets')
+        .delete()
+        .eq('id', assetId);
+        
+      if (dbError) throw new Error(`Failed to delete asset from database: ${dbError.message}`);
+    } catch (error) {
+      console.error("Error deleting asset:", error);
+      throw error;
+    }
   }
 };
 
