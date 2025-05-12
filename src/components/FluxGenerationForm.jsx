@@ -11,10 +11,14 @@ export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localho
 const FluxGenerationForm = () => {
   const [values, setValues] = useState({
     prompt: 'neon-mist, cpstyle, rock!, Gatling_mounted, madocalypse',
+    negativePrompt: 'low quality, bad anatomy, blurry, pixelated, distorted, deformed',
     steps: 28,
+    guidanceScale: 15,
     inputImage: null,
     reduxImage: null,
     filenamePrefix: 'Otherides-2d',
+    samplerName: 'ddim',
+    scheduler: 'ddim_uniform'
   });
   
   const [isGenerating, setIsGenerating] = useState(false);
@@ -23,6 +27,7 @@ const FluxGenerationForm = () => {
   const [generationTimestamp, setGenerationTimestamp] = useState(null);
   const [pollingAttempts, setPollingAttempts] = useState(0);
   const [sessionId, setSessionId] = useState(null);
+  const [advancedMode, setAdvancedMode] = useState(false);
 
   const handleChange = (key, value) => {
     setValues(prev => ({...prev, [key]: value}));
@@ -35,11 +40,21 @@ const FluxGenerationForm = () => {
     setPollingAttempts(0);
 
     try {
+      // Validate input image for advanced mode
+      if (advancedMode && !values.inputImage) {
+        throw new Error("Input image is required for advanced mode");
+      }
+
       // Create a session for tracking
       const session = await SupabaseService.createSession({
         prompt: values.prompt,
+        negativePrompt: values.negativePrompt,
         steps: values.steps,
+        guidanceScale: values.guidanceScale,
         filenamePrefix: values.filenamePrefix,
+        advancedMode: advancedMode,
+        samplerName: values.samplerName,
+        scheduler: values.scheduler,
         source: 'flux-workflow'
       });
       
@@ -60,15 +75,33 @@ const FluxGenerationForm = () => {
         reduxImagePath = await uploadFile(values.reduxImage, 'redux-images');
       }
       
-      // Create the workflow
+      // Create the workflow based on mode
       setStatus({ message: 'Creating workflow...', error: false });
-      const { workflow, timestamp } = ComfyService.createFluxWorkflow({
-        prompt: values.prompt,
-        steps: values.steps,
-        inputImageUrl: inputImagePath,
-        reduxImageUrl: reduxImagePath,
-        filenamePrefix: values.filenamePrefix
-      });
+      
+      let result;
+      if (advancedMode) {
+        result = ComfyService.createFluxAdvancedWorkflow({
+          prompt: values.prompt,
+          negativePrompt: values.negativePrompt,
+          steps: values.steps,
+          guidanceScale: values.guidanceScale,
+          inputImageUrl: inputImagePath,
+          reduxImageUrl: reduxImagePath,
+          filenamePrefix: values.filenamePrefix,
+          samplerName: values.samplerName,
+          scheduler: values.scheduler
+        });
+      } else {
+        result = ComfyService.createFluxWorkflow({
+          prompt: values.prompt,
+          steps: values.steps,
+          inputImageUrl: inputImagePath,
+          reduxImageUrl: reduxImagePath,
+          filenamePrefix: values.filenamePrefix
+        });
+      }
+      
+      const { workflow, timestamp } = result;
       
       // Save the timestamp for later use in polling
       setGenerationTimestamp(timestamp);
@@ -229,7 +262,12 @@ const FluxGenerationForm = () => {
             status: 'complete',
             metadata: {
               prompt: values.prompt,
+              negativePrompt: values.negativePrompt,
               steps: values.steps,
+              guidanceScale: advancedMode ? values.guidanceScale : undefined,
+              advancedMode: advancedMode,
+              samplerName: values.samplerName,
+              scheduler: values.scheduler,
               filename: filename
             }
           }
@@ -302,6 +340,23 @@ const FluxGenerationForm = () => {
     <FormContainer>
       <h2>Generate with Flux Workflow</h2>
       
+      <ModeToggleContainer>
+        <ModeToggleLabel>
+          <input
+            type="checkbox"
+            checked={advancedMode}
+            onChange={() => setAdvancedMode(!advancedMode)}
+          />
+          Enable Advanced Mode {advancedMode && "(Depth Conditioning)"}
+        </ModeToggleLabel>
+        <ModeDescription>
+          {advancedMode 
+            ? "Advanced mode uses depth conditioning to create images with more structure and consistency. Input image is required."
+            : "Simple mode generates images without requiring an input image."
+          }
+        </ModeDescription>
+      </ModeToggleContainer>
+      
       <Form onSubmit={handleSubmit}>
         <FormGroup>
           <Label>Prompt</Label>
@@ -314,18 +369,75 @@ const FluxGenerationForm = () => {
         </FormGroup>
         
         <FormGroup>
-          <Label>Steps</Label>
-          <Input
-            type="number"
-            min="1"
-            max="100"
-            value={values.steps}
-            onChange={(e) => handleChange('steps', parseInt(e.target.value))}
+          <Label>Negative Prompt</Label>
+          <TextArea
+            value={values.negativePrompt}
+            onChange={(e) => handleChange('negativePrompt', e.target.value)}
+            placeholder="Enter negative prompt"
+            rows={2}
           />
         </FormGroup>
         
+        <FormRow>
+          <FormGroup style={{ flex: 1 }}>
+            <Label>Steps</Label>
+            <Input
+              type="number"
+              min="1"
+              max="100"
+              value={values.steps}
+              onChange={(e) => handleChange('steps', parseInt(e.target.value))}
+            />
+          </FormGroup>
+          
+          {advancedMode && (
+            <FormGroup style={{ flex: 1 }}>
+              <Label>Guidance Scale</Label>
+              <Input
+                type="number"
+                min="1"
+                max="30"
+                step="0.1"
+                value={values.guidanceScale}
+                onChange={(e) => handleChange('guidanceScale', parseFloat(e.target.value))}
+              />
+            </FormGroup>
+          )}
+        </FormRow>
+        
+        {advancedMode && (
+          <FormRow>
+            <FormGroup style={{ flex: 1 }}>
+              <Label>Sampler</Label>
+              <Select
+                value={values.samplerName}
+                onChange={(e) => handleChange('samplerName', e.target.value)}
+              >
+                <option value="ddim">DDIM</option>
+                <option value="euler">Euler</option>
+                <option value="euler_ancestral">Euler Ancestral</option>
+                <option value="dpm_2">DPM2</option>
+                <option value="dpm_2_ancestral">DPM2 Ancestral</option>
+              </Select>
+            </FormGroup>
+            
+            <FormGroup style={{ flex: 1 }}>
+              <Label>Scheduler</Label>
+              <Select
+                value={values.scheduler}
+                onChange={(e) => handleChange('scheduler', e.target.value)}
+              >
+                <option value="ddim_uniform">DDIM Uniform</option>
+                <option value="normal">Normal</option>
+                <option value="karras">Karras</option>
+                <option value="exponential">Exponential</option>
+              </Select>
+            </FormGroup>
+          </FormRow>
+        )}
+        
         <FormGroup>
-          <Label>Input Image (for Depth Map)</Label>
+          <Label>{advancedMode ? "Input Image (Required for Depth Map)" : "Input Image (Optional)"}</Label>
           <FileInput
             type="file"
             accept="image/*"
@@ -334,6 +446,7 @@ const FluxGenerationForm = () => {
                 handleChange('inputImage', e.target.files[0]);
               }
             }}
+            required={advancedMode}
           />
           {values.inputImage && (
             <PreviewContainer>
@@ -348,7 +461,7 @@ const FluxGenerationForm = () => {
         </FormGroup>
 
         <FormGroup>
-          <Label>Redux Reference Image</Label>
+          <Label>Redux Reference Image (Optional)</Label>
           <FileInput
             type="file"
             accept="image/*"
@@ -378,7 +491,7 @@ const FluxGenerationForm = () => {
           />
         </FormGroup>
         
-        <Button type="submit" disabled={isGenerating}>
+        <Button type="submit" disabled={isGenerating || (advancedMode && !values.inputImage)}>
           {isGenerating ? 'Generating...' : 'Generate Image'}
         </Button>
       </Form>
@@ -461,12 +574,24 @@ const FormGroup = styled.div`
   gap: 6px;
 `;
 
+const FormRow = styled.div`
+  display: flex;
+  gap: 16px;
+`;
+
 const Label = styled.label`
   font-weight: bold;
   color: #333;
 `;
 
 const Input = styled.input`
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+`;
+
+const Select = styled.select`
   padding: 10px;
   border: 1px solid #ddd;
   border-radius: 4px;
@@ -507,6 +632,33 @@ const PreviewImage = styled.img`
   max-height: 200px;
   border-radius: 4px;
   display: block;
+`;
+
+const ModeToggleContainer = styled.div`
+  margin-bottom: 20px;
+  padding: 10px 15px;
+  background-color: #f0f7ff;
+  border: 1px solid #cce5ff;
+  border-radius: 4px;
+`;
+
+const ModeToggleLabel = styled.label`
+  display: flex;
+  align-items: center;
+  font-weight: bold;
+  color: #0066cc;
+  cursor: pointer;
+  
+  input {
+    margin-right: 8px;
+  }
+`;
+
+const ModeDescription = styled.p`
+  margin-top: 5px;
+  margin-bottom: 0;
+  color: #0066cc;
+  font-size: 0.9rem;
 `;
 
 const Button = styled.button`

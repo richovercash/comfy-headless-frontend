@@ -1,7 +1,8 @@
 // src/services/comfyService.js
 import axios from 'axios';
-// Import with explicit named import
+// Import workflow generators
 import { createFluxSimplifiedWorkflow } from '../workflows/fluxSimplified';
+import { createFluxAdvancedWorkflow } from '../workflows/fluxAdvanced';
 import { validateWorkflow, convertEditorWorkflowToAPIFormat } from '../utils/workflowConverter';
 
 // API base URL
@@ -151,11 +152,19 @@ export const ComfyService = {
   },
 
   /**
-   * Create a Flux workflow with the provided options
-   * Uses our simplified, robust workflow
+   * Create a simplified Flux workflow with the provided options
+   * Uses our simplified, robust workflow for basic generation
    */
   createFluxWorkflow(options) {
     return createFluxSimplifiedWorkflow(options);
+  },
+
+  /**
+   * Create an advanced Flux workflow with depth conditioning and enhanced features
+   * Uses our advanced workflow for more complex generation with depth maps
+   */
+  createFluxAdvancedWorkflow(options) {
+    return createFluxAdvancedWorkflow(options);
   },
 
   /**
