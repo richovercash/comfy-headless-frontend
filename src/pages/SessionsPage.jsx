@@ -3,6 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
 import SupabaseService from '../services/supabaseService';
+import { Spinner } from '../components/Spinner';
+import { ErrorMessage } from '../components/ErrorMessage';
 
 const PageContainer = styled.div`
   max-width: 1200px;
@@ -79,15 +81,18 @@ const SessionDetails = styled.div`
 const SessionsPage = () => {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     const loadSessions = async () => {
       try {
         setLoading(true);
+        setError(null);
         const sessionsData = await SupabaseService.getSessions();
         setSessions(sessionsData);
       } catch (error) {
         console.error('Error loading sessions:', error);
+        setError('Failed to load sessions. Please try again.');
       } finally {
         setLoading(false);
       }
@@ -119,8 +124,10 @@ const SessionsPage = () => {
         </Link>
       </PageHeader>
 
+      {error && <ErrorMessage>{error}</ErrorMessage>}
+
       {loading ? (
-        <p>Loading sessions...</p>
+        <Spinner />
       ) : sessions.length > 0 ? (
         <SessionsList>
           {sessions.map(session => (

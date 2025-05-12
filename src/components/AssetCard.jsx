@@ -1,179 +1,269 @@
 // src/components/AssetCard.jsx
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import styled from 'styled-components';
-import { supabase } from '../services/supabaseService';
+import SupabaseService from '../services/supabaseService';
 
-const AssetCard = ({ asset, onSelect }) => {
+const Card = styled.div`
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+  background-color: #f9f9f9;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s ease;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+
+  &:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  }
+`;
+
+const AssetImage = styled.img`
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  object-fit: cover;
+  aspect-ratio: 16/9;
+`;
+
+const ImagePlaceholder = styled.div`
+  width: 100%;
+  aspect-ratio: 16/9;
+  background-color: #e0e0e0;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #777;
+  font-size: 0.9rem;
+`;
+
+const AssetTitle = styled.h3`
+  margin: 0 0 8px 0;
+  color: #333;
+  word-break: break-word;
+`;
+
+const AssetType = styled.span`
+  background-color: #e0e0e0;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: #555;
+  display: inline-block;
+  margin-bottom: 8px;
+`;
+
+const TraitsList = styled.div`
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+`;
+
+const TraitTag = styled.span`
+  background-color: #007bff;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+`;
+
+const ErrorMessage = styled.div`
+  color: #d32f2f;
+  font-size: 0.8rem;
+  margin-top: 8px;
+`;
+
+const ViewLink = styled(Link)`
+  margin-top: auto;
+  display: inline-block;
+  padding: 6px 12px;
+  background-color: #007bff;
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  align-self: flex-start;
+  
+  &:hover {
+    background-color: #0056b3;
+    text-decoration: none;
+  }
+`;
+
+const AssetInfo = styled.div`
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+`;
+
+const AssetMetadata = styled.div`
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: #666;
+`;
+
+const CardContainer = styled.div`
+  cursor: pointer;
+  transition: transform 0.2s;
+  
+  &:hover {
+    transform: translateY(-4px);
+  }
+`;
+
+const AssetCard = ({ asset, onClick }) => {
   const [imageUrl, setImageUrl] = useState(null);
+  const [traits, setTraits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    const loadAssetData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        if (!asset || !asset.storage_path) {
+          setError('Invalid asset data');
+          setLoading(false);
+          return;
+        }
+
+        // Extract bucket and path from storage_path (format: "bucket/path")
+        const [bucket, ...pathParts] = asset.storage_path.split('/');
+        const path = pathParts.join('/');
+
+        if (!bucket || !path) {
+          setError('Invalid storage path format');
+          setLoading(false);
+          return;
+        }
+
+        // Get URL using the most robust approach - try multiple methods
+        try {
+          // Try using getDownloadUrl from SupabaseService
+          const url = await SupabaseService.getDownloadUrl(asset.storage_path);
+          if (url) {
+            setImageUrl(url);
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.log('getDownloadUrl method failed, trying alternatives', e);
+        }
+
+        // Try using the public URL (for public buckets)
+        try {
+          const publicUrl = SupabaseService.getPublicUrl(bucket, path);
+          if (publicUrl) {
+            setImageUrl(publicUrl);
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.log('getPublicUrl method failed, trying alternatives', e);
+        }
+
+        // Try signed URL as last resort
+        try {
+          const signedUrl = await SupabaseService.getSignedUrl(bucket, path, 3600);
+          if (signedUrl) {
+            setImageUrl(signedUrl);
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.log('getSignedUrl method failed', e);
+          setError('Could not generate URL for asset');
+          setLoading(false);
+        }
+
+        // Process traits if available
+        if (asset.traits && asset.traits.length > 0) {
+          const processedTraits = asset.traits
+            .map(t => t.traits)
+            .filter(Boolean);
+          setTraits(processedTraits);
+        }
+      } catch (err) {
+        console.error('Error loading asset data:', err);
+        setError(`Error: ${err.message}`);
+        setLoading(false);
+      }
+    };
+
     loadAssetData();
   }, [asset]);
 
-  const loadAssetData = async () => {
-    try {
-      if (!asset || !asset.storage_path) {
-        setError('Invalid asset data');
-        setLoading(false);
-        return;
-      }
-
-      // Extract bucket and path from storage_path (format: "bucket/path")
-      const [bucket, ...pathParts] = asset.storage_path.split('/');
-      const path = pathParts.join('/');
-
-      if (!bucket || !path) {
-        setError('Invalid storage path format');
-        setLoading(false);
-        return;
-      }
-
-      // Get URL using the correct method for your Supabase version
-      try {
-        // Try the newer method first (getPublicUrl)
-        const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-        if (data && data.publicUrl) {
-          setImageUrl(data.publicUrl);
-          setLoading(false);
-          return;
-        }
-      } catch (e) {
-        console.log('getPublicUrl method failed, trying alternative', e);
-      }
-
-      // Try signed URL as fallback (for private buckets)
-      try {
-        const { data, error: signedUrlError } = await supabase.storage
-          .from(bucket)
-          .createSignedUrl(path, 3600); // 1 hour expiry
-
-        if (signedUrlError) throw signedUrlError;
-        
-        if (data && data.signedUrl) {
-          setImageUrl(data.signedUrl);
-          setLoading(false);
-          return;
-        }
-      } catch (e) {
-        console.log('createSignedUrl method failed', e);
-      }
-
-      // Last resort - try the download URL (older versions)
-      try {
-        const { data: downloadData, error: downloadError } = await supabase.storage
-          .from(bucket)
-          .download(path);
-          
-        if (downloadError) throw downloadError;
-        
-        // Create object URL from the downloaded blob
-        const objectUrl = URL.createObjectURL(downloadData);
-        setImageUrl(objectUrl);
-        
-        // Clean up object URL on unmount
-        return () => {
-          URL.revokeObjectURL(objectUrl);
-        };
-      } catch (e) {
-        throw new Error(`All URL retrieval methods failed: ${e.message}`);
-      }
-    } catch (err) {
-      console.error('Error loading asset data:', err);
-      setError(`Error: ${err.message}`);
-      setLoading(false);
-    }
+  const getAssetTypeLabel = (type) => {
+    const typeMap = {
+      'prompt': 'Prompt',
+      'image_2d': '2D Image',
+      'model_3d': '3D Model',
+      'orthogonal_view': 'Orthogonal View',
+      'final_model': 'Final Model'
+    };
+    return typeMap[type] || type;
   };
 
   const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+    try {
+      return new Date(dateString).toLocaleDateString();
+    } catch (e) {
+      return 'Unknown date';
+    }
+  };
+
+  const getPromptExcerpt = (metadata) => {
+    if (!metadata || !metadata.prompt) return 'No prompt available';
+    return metadata.prompt.length > 60 
+      ? `${metadata.prompt.substring(0, 60)}...` 
+      : metadata.prompt;
+  };
+
+  const handleClick = (e) => {
+    // Prevent the link click from triggering when clicking the card
+    e.preventDefault();
+    onClick(asset);
   };
 
   return (
-    <CardContainer onClick={() => onSelect && onSelect(asset)}>
-      {loading && <LoadingIndicator>Loading...</LoadingIndicator>}
-      
-      {error && <ErrorMessage>{error}</ErrorMessage>}
-      
-      {!loading && !error && (
-        <>
-          <ImagePreview src={imageUrl} alt={`Asset ${asset.id}`} />
+    <CardContainer onClick={handleClick}>
+      <Card>
+        <AssetType>{getAssetTypeLabel(asset.asset_type)}</AssetType>
+        
+        {loading ? (
+          <ImagePlaceholder>Loading asset...</ImagePlaceholder>
+        ) : error ? (
+          <ImagePlaceholder>Could not load asset</ImagePlaceholder>
+        ) : (
+          imageUrl && (
+            <AssetImage src={imageUrl} alt={`Asset ${asset.id}`} />
+          )
+        )}
+        
+        <AssetInfo>
+          <AssetTitle>
+            {getPromptExcerpt(asset.metadata)}
+          </AssetTitle>
           
-          <AssetInfo>
-            <AssetType>{asset.asset_type}</AssetType>
-            <AssetDate>{formatDate(asset.created_at)}</AssetDate>
-            
-            {asset.metadata && asset.metadata.prompt && (
-              <AssetPrompt>
-                {asset.metadata.prompt.length > 50 
-                  ? asset.metadata.prompt.substring(0, 50) + '...' 
-                  : asset.metadata.prompt}
-              </AssetPrompt>
-            )}
-          </AssetInfo>
-        </>
-      )}
+          <AssetMetadata>
+            Created: {formatDate(asset.created_at)}
+          </AssetMetadata>
+          
+          {error && <ErrorMessage>{error}</ErrorMessage>}
+        </AssetInfo>
+      </Card>
     </CardContainer>
   );
 };
-
-const CardContainer = styled.div`
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  overflow: hidden;
-  background-color: white;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  transition: transform 0.2s, box-shadow 0.2s;
-  cursor: pointer;
-  
-  &:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-  }
-`;
-
-const ImagePreview = styled.img`
-  width: 100%;
-  height: 200px;
-  object-fit: cover;
-  border-bottom: 1px solid #eee;
-`;
-
-const AssetInfo = styled.div`
-  padding: 12px;
-`;
-
-const AssetType = styled.div`
-  font-weight: bold;
-  color: #333;
-  margin-bottom: 4px;
-`;
-
-const AssetDate = styled.div`
-  font-size: 0.8rem;
-  color: #777;
-  margin-bottom: 8px;
-`;
-
-const AssetPrompt = styled.div`
-  font-size: 0.9rem;
-  color: #555;
-  font-style: italic;
-`;
-
-const LoadingIndicator = styled.div`
-  padding: 20px;
-  text-align: center;
-  color: #777;
-`;
-
-const ErrorMessage = styled.div`
-  padding: 20px;
-  text-align: center;
-  color: #e53935;
-  font-size: 0.9rem;
-`;
 
 export default AssetCard;

@@ -1,5 +1,6 @@
 // src/components/FluxGenerationForm.jsx
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import ComfyService from '../services/comfyService';
 import SupabaseService from '../services/supabaseService';
@@ -9,6 +10,7 @@ import ComfyUITroubleshooter from './ComfyUITroubleshooter';
 export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
 
 const FluxGenerationForm = () => {
+  const navigate = useNavigate();
   const [values, setValues] = useState({
     prompt: 'post-apocalyptic vehicle, rusted, armored, damaged, desert setting, dramatic lighting',
     negativePrompt: 'low quality, bad anatomy, blurry, pixelated, distorted, deformed',
@@ -25,6 +27,7 @@ const FluxGenerationForm = () => {
   const [generationTimestamp, setGenerationTimestamp] = useState(null);
   const [pollingAttempts, setPollingAttempts] = useState(0);
   const [sessionId, setSessionId] = useState(null);
+  const [createdAsset, setCreatedAsset] = useState(null);
 
   const handleChange = (key, value) => {
     setValues(prev => ({...prev, [key]: value}));
@@ -35,6 +38,7 @@ const FluxGenerationForm = () => {
     setIsGenerating(true);
     setStatus({ message: 'Starting generation...', error: false });
     setPollingAttempts(0);
+    setCreatedAsset(null);
 
     try {
       // Create a session for tracking
@@ -44,7 +48,8 @@ const FluxGenerationForm = () => {
         steps: values.steps,
         filenamePrefix: values.filenamePrefix,
         source: values.useAdvancedMode ? 'flux-advanced' : 'flux-basic',
-        useAdvancedMode: values.useAdvancedMode
+        useAdvancedMode: values.useAdvancedMode,
+        timestamp: Date.now()
       });
       
       console.log("Session created:", session);
@@ -68,7 +73,7 @@ const FluxGenerationForm = () => {
       setStatus({ message: 'Creating workflow...', error: false });
       
       // Choose between simple or advanced workflow
-      const result = values.useAdvancedMode
+      const result = values.useAdvancedMode && inputImageUrl
         ? ComfyService.createAdvancedFluxWorkflow({
             prompt: values.prompt,
             negativePrompt: values.negativePrompt,
@@ -122,28 +127,7 @@ const FluxGenerationForm = () => {
       const filename = `${timestamp}-${safeFilename}`;
       
       // First, ensure the bucket exists and is configured for public access
-      try {
-        // Check if bucket exists
-        const { data: buckets } = await supabase.storage.listBuckets();
-        const bucketExists = buckets.some(b => b.name === bucket);
-        
-        if (!bucketExists) {
-          console.log(`Creating storage bucket '${bucket}'`);
-          // Create bucket with public access
-          await supabase.storage.createBucket(bucket, {
-            public: true, // Set to public for URL access
-            fileSizeLimit: 10485760 // 10MB
-          });
-        } else {
-          // If bucket exists, update it to be public if needed
-          await supabase.storage.updateBucket(bucket, {
-            public: true
-          });
-        }
-      } catch (error) {
-        console.error("Error ensuring bucket exists and is public:", error);
-        // Continue anyway, in case the error is just with checking
-      }
+      await SupabaseService.ensureBucketExists(bucket, true);
       
       // Upload the file to Supabase
       const { data: uploadData, error: uploadError } = await supabase
@@ -244,11 +228,7 @@ const FluxGenerationForm = () => {
     }
   };
 
-
-  
-// Fix for processGeneratedImage function in FluxGenerationForm.jsx
-// This is a partial implementation that focuses on fixing the Supabase upload issue
-
+  // Function to process the generated image once found
   const processGeneratedImage = async (filename, sessionId) => {
     try {
       console.log("Processing generated image:", filename);
@@ -269,57 +249,50 @@ const FluxGenerationForm = () => {
       // Create a file object from the blob
       const imageFile = new File([imageBlob], filename, { type: imageBlob.type });
       
-      // Upload to Supabase storage with full error handling
-      try {
-        // Make sure the bucket exists
-        await SupabaseService.ensureBucketExists('images-2d', false);
-        
-        // Construct the storage path
-        const storagePath = `${sessionId}/${filename}`;
-        console.log("Uploading to Supabase storage:", storagePath);
-        
-        // Upload using the SupabaseService method
-        await SupabaseService.uploadFile('images-2d', storagePath, imageFile);
-        
-        console.log("Successfully uploaded image to Supabase");
-        
-        // Create asset record in database
-        console.log("Creating asset record in database");
-        const assetData = await SupabaseService.createAsset({
-          asset_type: 'image_2d',
-          storage_path: `images-2d/${storagePath}`, // Make sure path includes bucket name
-          parent_asset_id: null, // This is an original generation
-          status: 'complete',
-          metadata: {
-            prompt: values.prompt,
-            negativePrompt: values.negativePrompt,
-            steps: values.steps,
-            advanced_mode: values.useAdvancedMode,
-            filename: filename
-          }
-        });
-        
-        console.log("Asset created:", assetData);
-        
-        // Link asset to session
-        if (assetData && assetData.id) {
-          console.log("Linking asset to session");
-          await SupabaseService.linkAssetToSession(sessionId, assetData.id);
-        }
-        
-        // Update session status
-        console.log("Updating session status to completed");
-        await SupabaseService.updateSessionStatus(sessionId, 'completed');
-        
-        setStatus({ 
-          message: 'Generation completed successfully! You can view the result on the Assets page.', 
-          error: false 
-        });
-      } catch (uploadError) {
-        console.error("Error uploading to Supabase:", uploadError);
-        throw new Error(`Failed to upload to Supabase: ${uploadError.message}`);
-      }
+      // Upload to Supabase storage
+      const bucketName = 'images-2d';
+      const storagePath = `${sessionId}/${filename}`;
       
+      // Make sure the bucket exists
+      await SupabaseService.ensureBucketExists(bucketName);
+      
+      // Use uploadFile from SupabaseService for better error handling
+      await SupabaseService.uploadFile(bucketName, storagePath, imageFile);
+      
+      // Create asset record in database
+      console.log("Creating asset record in database");
+      
+      const assetData = {
+        asset_type: 'image_2d',
+        storage_path: `${bucketName}/${storagePath}`,
+        parent_asset_id: null, // This is an original generation
+        status: 'complete',
+        metadata: {
+          prompt: values.prompt,
+          negativePrompt: values.negativePrompt,
+          steps: values.steps,
+          advanced_mode: values.useAdvancedMode,
+          filename: filename,
+          timestamp: Date.now()
+        }
+      };
+      
+      // Create the asset record
+      const asset = await SupabaseService.createAsset(assetData);
+      
+      console.log("Asset created:", asset);
+      setCreatedAsset(asset);
+      
+      // Link asset to session
+      await SupabaseService.linkAssetToSession(sessionId, asset.id);
+      
+      // Update session status
+      await SupabaseService.updateSessionStatus(sessionId, 'completed');
+      
+      setStatus({ 
+        message: 'Generation completed successfully! You can view the result on the Assets page.', 
+        error: false 
+      });
     } catch (error) {
       console.error("Error processing generated image:", error);
       setStatus({ 
@@ -330,8 +303,6 @@ const FluxGenerationForm = () => {
       setIsGenerating(false);
     }
   };
-
-
 
   // Clear any existing file object URLs when component unmounts
   useEffect(() => {
@@ -352,7 +323,7 @@ const FluxGenerationForm = () => {
       <FormInfo>
         <InfoIcon>ℹ️</InfoIcon>
         <InfoText>
-          This form allows you to generate post-apocalyptic vehicle images with the Flux model. 
+          This tool uses the Flux workflow in ComfyUI to generate post-apocalyptic vehicle images. 
           Enter a prompt, adjust the settings, and optionally provide input images for more controlled results.
           The advanced mode uses depth conditioning for more structured vehicle generation.
         </InfoText>
@@ -469,6 +440,17 @@ const FluxGenerationForm = () => {
           {isGenerating ? 'Generating...' : 'Generate Vehicle'}
         </Button>
       </Form>
+      
+      {createdAsset && (
+        <SuccessContainer>
+          <h3>Generation Successful!</h3>
+          <p>Your vehicle has been generated and saved to the asset library.</p>
+          <ButtonGroup>
+            <Button onClick={() => navigate('/assets')}>View All Assets</Button>
+            <Button onClick={() => navigate(`/assets/${createdAsset.id}`)} className="secondary">View This Asset</Button>
+          </ButtonGroup>
+        </SuccessContainer>
+      )}
       
       <TroubleshootingSection>
         <h3>Troubleshooting</h3>
@@ -622,6 +604,12 @@ const Button = styled.button`
   }
 `;
 
+const ButtonGroup = styled.div`
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+`;
+
 const TroubleshootingSection = styled.div`
   margin-top: 24px;
   padding: 16px;
@@ -685,6 +673,24 @@ const Checkbox = styled.input`
 
 const CheckboxLabel = styled.label`
   font-weight: normal;
+`;
+
+const SuccessContainer = styled.div`
+  margin-top: 20px;
+  padding: 16px;
+  background-color: #e8f5e9;
+  border: 1px solid #c8e6c9;
+  border-radius: 8px;
+  text-align: center;
+  
+  h3 {
+    color: #2e7d32;
+    margin-top: 0;
+  }
+  
+  p {
+    margin-bottom: 16px;
+  }
 `;
 
 export default FluxGenerationForm;

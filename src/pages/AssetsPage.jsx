@@ -3,6 +3,9 @@ import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import AssetCard from '../components/AssetCard';
 import SupabaseService from '../services/supabaseService';
+import { Spinner } from '../components/Spinner';
+import { ErrorMessage } from '../components/ErrorMessage';
+import AssetDetailView from '../components/AssetDetailView';
 
 const PageContainer = styled.div`
   max-width: 1200px;
@@ -43,37 +46,68 @@ const EmptyState = styled.div`
   color: #666;
 `;
 
+const RefreshButton = styled.button`
+  padding: 8px 16px;
+  border-radius: 4px;
+  background-color: #f0f0f0;
+  border: 1px solid #ddd;
+  cursor: pointer;
+  
+  &:hover {
+    background-color: #e0e0e0;
+  }
+`;
+
+const SortSelect = styled(FilterSelect)`
+  min-width: 150px;
+`;
+
 const AssetsPage = () => {
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [assetTypeFilter, setAssetTypeFilter] = useState('');
+  const [error, setError] = useState(null);
+  const [sortBy, setSortBy] = useState('newest');
+  const [selectedAsset, setSelectedAsset] = useState(null);
   
-  useEffect(() => {
-    const loadAssets = async () => {
-      try {
-        setLoading(true);
-        const options = {};
-        
-        if (assetTypeFilter) {
-          options.assetType = assetTypeFilter;
-        }
-        
-        const assetsData = await SupabaseService.getAssets(options);
-        setAssets(assetsData);
-      } catch (error) {
-        console.error('Error loading assets:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+  const loadAssets = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const options = {
+        assetType: assetTypeFilter,
+        sortBy: sortBy
+      };
+      
+      const assetsData = await SupabaseService.getAssets(options);
+      setAssets(assetsData);
+    } catch (error) {
+      console.error('Error loading assets:', error);
+      setError('Failed to load assets. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     loadAssets();
-  }, [assetTypeFilter]);
+  }, [assetTypeFilter, sortBy]);
+
+  const handleAssetClick = (asset) => {
+    setSelectedAsset(asset);
+  };
+
+  const handleCloseModal = () => {
+    setSelectedAsset(null);
+  };
 
   return (
     <PageContainer>
       <PageHeader>
         <h1>Asset Library</h1>
+        <RefreshButton onClick={loadAssets}>
+          Refresh Assets
+        </RefreshButton>
       </PageHeader>
 
       <FilterContainer>
@@ -88,13 +122,30 @@ const AssetsPage = () => {
           <option value="orthogonal_view">Orthogonal Views</option>
           <option value="final_model">Final Models</option>
         </FilterSelect>
+
+        <SortSelect
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value)}
+        >
+          <option value="newest">Newest First</option>
+          <option value="oldest">Oldest First</option>
+          <option value="name">Name A-Z</option>
+          <option value="name_desc">Name Z-A</option>
+        </SortSelect>
       </FilterContainer>
+
+      {error && <ErrorMessage>{error}</ErrorMessage>}
+      
       {loading ? (
-        <p>Loading assets...</p>
+        <Spinner />
       ) : assets.length > 0 ? (
         <AssetsGrid>
           {assets.map(asset => (
-            <AssetCard key={asset.id} asset={asset} />
+            <AssetCard 
+              key={asset.id} 
+              asset={asset} 
+              onClick={() => handleAssetClick(asset)}
+            />
           ))}
         </AssetsGrid>
       ) : (
@@ -102,6 +153,13 @@ const AssetsPage = () => {
           <h3>No assets found</h3>
           <p>Try changing your filters or generate new assets</p>
         </EmptyState>
+      )}
+
+      {selectedAsset && (
+        <AssetDetailView 
+          asset={selectedAsset} 
+          onClose={handleCloseModal}
+        />
       )}
     </PageContainer>
   );

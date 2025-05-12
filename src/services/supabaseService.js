@@ -271,9 +271,44 @@ const SupabaseService = {
   },
   
   /**
-   * Get all assets matching a filter
+   * Get all sessions with their assets
+   * @returns {Promise<Array>} - Array of sessions with assets
+   */
+  async getSessions() {
+    try {
+      const { data, error } = await supabase
+        .from('generation_sessions')
+        .select(`
+          *,
+          session_assets (
+            assets (
+              id,
+              asset_type,
+              storage_path,
+              metadata,
+              created_at
+            )
+          )
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw new Error(`Failed to get sessions: ${error.message}`);
+
+      // Transform the data to flatten the structure
+      return data.map(session => ({
+        ...session,
+        assets: session.session_assets?.map(sa => sa.assets) || []
+      }));
+    } catch (error) {
+      console.error("Error getting sessions:", error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Get all assets matching a filter with URLs
    * @param {Object} filter - Filter criteria
-   * @returns {Promise<Array>} - Filtered assets
+   * @returns {Promise<Array>} - Filtered assets with URLs
    */
   async getAssets(filter = {}) {
     try {
@@ -286,27 +321,51 @@ const SupabaseService = {
         query = query.eq('asset_type', filter.assetType);
       }
       
-      if (filter.status) {
-        query = query.eq('status', filter.status);
-      }
-      
-      // Add order by created_at descending (newest first)
-      query = query.order('created_at', { ascending: false });
-      
-      // Apply pagination if provided
-      if (filter.limit) {
-        query = query.limit(filter.limit);
-      }
-      
-      if (filter.offset) {
-        query = query.range(filter.offset, filter.offset + (filter.limit || 10) - 1);
+      // Apply sorting
+      switch (filter.sortBy) {
+        case 'oldest':
+          query = query.order('created_at', { ascending: true });
+          break;
+        case 'name':
+          query = query.order('metadata->prompt', { ascending: true });
+          break;
+        case 'name_desc':
+          query = query.order('metadata->prompt', { ascending: false });
+          break;
+        case 'newest':
+        default:
+          query = query.order('created_at', { ascending: false });
       }
       
       const { data, error } = await query;
       
       if (error) throw new Error(`Failed to get assets: ${error.message}`);
       
-      return data;
+      // Add URLs to assets
+      const assetsWithUrls = await Promise.all(data.map(async (asset) => {
+        try {
+          if (asset.storage_path) {
+            const [bucket, ...pathParts] = asset.storage_path.split('/');
+            const path = pathParts.join('/');
+            
+            // Try public URL first
+            let url = this.getPublicUrl(bucket, path);
+            
+            // If not public, try signed URL
+            if (!url) {
+              url = await this.getSignedUrl(bucket, path);
+            }
+            
+            return { ...asset, url };
+          }
+          return asset;
+        } catch (err) {
+          console.warn(`Warning: Could not get URL for asset ${asset.id}:`, err);
+          return asset;
+        }
+      }));
+      
+      return assetsWithUrls;
     } catch (error) {
       console.error("Error getting assets:", error);
       throw error;
