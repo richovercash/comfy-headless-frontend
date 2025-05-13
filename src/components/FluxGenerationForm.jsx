@@ -1,24 +1,25 @@
 // src/components/FluxGenerationForm.jsx
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import ComfyService from '../services/comfyService';
 import SupabaseService from '../services/supabaseService';
 import { supabase } from "../services/supabaseService";
 import ComfyUITroubleshooter from './ComfyUITroubleshooter';
+import Base64Service from '../services/base64Service';
+
 
 export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
 
 const FluxGenerationForm = () => {
-  const navigate = useNavigate();
   const [values, setValues] = useState({
-    prompt: 'post-apocalyptic vehicle, rusted, armored, damaged, desert setting, dramatic lighting',
+    prompt: 'neon-mist, cpstyle, rock!, Gatling_mounted, madocalypse',
     negativePrompt: 'low quality, bad anatomy, blurry, pixelated, distorted, deformed',
     steps: 28,
     inputImage: null,
     reduxImage: null,
+    reduxStrength: 0.5, // Default Redux influence strength
     filenamePrefix: 'Otherides-2d',
-    useAdvancedMode: false
+    useDepth: true, // Whether to use depth processing
   });
   
   const [isGenerating, setIsGenerating] = useState(false);
@@ -27,78 +28,157 @@ const FluxGenerationForm = () => {
   const [generationTimestamp, setGenerationTimestamp] = useState(null);
   const [pollingAttempts, setPollingAttempts] = useState(0);
   const [sessionId, setSessionId] = useState(null);
-  const [createdAsset, setCreatedAsset] = useState(null);
+  const [useAdvancedWorkflow, setUseAdvancedWorkflow] = useState(false);
 
   const handleChange = (key, value) => {
     setValues(prev => ({...prev, [key]: value}));
   };
 
+
+
+  
+
+  // Session Management Fix for FluxGenerationForm.jsx
+
+  // 1. First, let's make sure the session creation is working correctly
+  const createSessionRecord = async () => {
+    console.log("Creating session record with parameters:", {
+      prompt: values.prompt,
+      negativePrompt: values.negativePrompt,
+      steps: values.steps,
+      filenamePrefix: values.filenamePrefix,
+      reduxStrength: values.reduxImage ? values.reduxStrength : null,
+      useDepth: values.useDepth,
+      source: 'flux-workflow',
+      workflowType: useAdvancedWorkflow ? 'advanced' : 'simple'
+    });
+    
+    try {
+      // Insert the session record
+      const { data, error } = await supabase
+        .from('generation_sessions')
+        .insert([
+          {
+            status: 'initiated',
+            parameters: {
+              prompt: values.prompt,
+              negativePrompt: values.negativePrompt,
+              steps: values.steps, 
+              filenamePrefix: values.filenamePrefix,
+              reduxStrength: values.reduxImage ? values.reduxStrength : null,
+              useDepth: values.useDepth,
+              source: 'flux-workflow',
+              workflowType: useAdvancedWorkflow ? 'advanced' : 'simple'
+            }
+          }
+        ])
+        .select();
+      
+      if (error) {
+        console.error("Error creating session:", error);
+        throw error;
+      }
+      
+      if (!data || data.length === 0) {
+        throw new Error("No session data returned after insert");
+      }
+      
+      console.log("Session created successfully:", data[0]);
+      return data[0];
+    } catch (error) {
+      console.error("Failed to create session:", error);
+      throw error;
+    }
+  };
+
+  // 2. Now, let's update the handleSubmit function to ensure session creation and updating works
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsGenerating(true);
     setStatus({ message: 'Starting generation...', error: false });
     setPollingAttempts(0);
-    setCreatedAsset(null);
-
+    
+    let sessionRecord = null;
+    
     try {
-      // Create a session for tracking
-      const session = await SupabaseService.createSession({
-        prompt: values.prompt,
-        negativePrompt: values.negativePrompt,
-        steps: values.steps,
-        filenamePrefix: values.filenamePrefix,
-        source: values.useAdvancedMode ? 'flux-advanced' : 'flux-basic',
-        useAdvancedMode: values.useAdvancedMode,
-        timestamp: Date.now()
-      });
+      // Create a new session record
+      sessionRecord = await createSessionRecord();
+      console.log("Session created with ID:", sessionRecord.id);
+      setSessionId(sessionRecord.id);
       
-      console.log("Session created:", session);
-      setSessionId(session.id);
+      // Update session status to in_progress
+      const { error: updateError } = await supabase
+        .from('generation_sessions')
+        .update({ status: 'in_progress' })
+        .eq('id', sessionRecord.id);
+        
+      if (updateError) {
+        console.error("Error updating session to in_progress:", updateError);
+      } else {
+        console.log("Session updated to in_progress");
+      }
       
-      // Upload images if they exist
-      let inputImageUrl = null;
-      let reduxImageUrl = null;
+      // Upload images to Supabase for storage as before
+      let inputImagePath = null;
+      let reduxImagePath = null;
       
       if (values.inputImage) {
         setStatus({ message: 'Uploading input image...', error: false });
-        inputImageUrl = await uploadFileAndGetPublicUrl(values.inputImage, 'input-images');
+        inputImagePath = await uploadFile(values.inputImage, 'input-images');
       }
       
       if (values.reduxImage) {
         setStatus({ message: 'Uploading redux image...', error: false });
-        reduxImageUrl = await uploadFileAndGetPublicUrl(values.reduxImage, 'redux-images');
+        reduxImagePath = await uploadFile(values.reduxImage, 'redux-images');
       }
       
-      // Create the workflow
+      // Create workflow
       setStatus({ message: 'Creating workflow...', error: false });
       
-      // Choose between simple or advanced workflow
-      const result = values.useAdvancedMode && inputImageUrl
-        ? ComfyService.createAdvancedFluxWorkflow({
-            prompt: values.prompt,
-            negativePrompt: values.negativePrompt,
-            steps: values.steps,
-            inputImageUrl: inputImageUrl,
-            reduxImageUrl: reduxImageUrl,
-            filenamePrefix: values.filenamePrefix
-          })
-        : ComfyService.createFluxWorkflow({
-            prompt: values.prompt,
-            negativePrompt: values.negativePrompt,
-            steps: values.steps,
-            inputImageUrl: inputImageUrl,
-            reduxImageUrl: reduxImageUrl,
-            filenamePrefix: values.filenamePrefix
-          });
+      // Choose workflow type based on settings
+      let workflowResult;
       
-      const { workflow, timestamp } = result;
+      if (useAdvancedWorkflow) {
+        workflowResult = ComfyService.createFluxAdvancedWorkflow({
+          prompt: values.prompt,
+          steps: values.steps,
+          reduxStrength: values.reduxStrength,
+          useDepth: values.useDepth,
+          filenamePrefix: values.filenamePrefix
+        });
+      } else {
+        workflowResult = ComfyService.createFluxWorkflow({
+          prompt: values.prompt,
+          steps: values.steps,
+          filenamePrefix: values.filenamePrefix
+        });
+      }
       
-      // Save the timestamp for later use in polling
+      // Save timestamp for later
+      const timestamp = workflowResult.timestamp;
       setGenerationTimestamp(timestamp);
+      
+      // Convert workflow to use base64 images
+      setStatus({ message: 'Processing images...', error: false });
+      
+      // Prepare image map for base64 conversion
+      const imageMap = {};
+      if (values.inputImage) {
+        imageMap["85"] = values.inputImage;
+      }
+      if (values.reduxImage) {
+        imageMap["94"] = values.reduxImage;
+      }
+      
+      // Convert workflow to use base64
+      const base64Workflow = await Base64Service.convertWorkflowToBase64(
+        workflowResult.workflow,
+        imageMap
+      );
       
       // Queue in ComfyUI
       setStatus({ message: 'Queueing workflow...', error: false });
-      const response = await ComfyService.queuePrompt(workflow);
+      const response = await ComfyService.queuePrompt(base64Workflow);
       
       setStatus({ 
         message: 'Generation in progress! Waiting for results...', 
@@ -106,10 +186,29 @@ const FluxGenerationForm = () => {
       });
       
       // Begin polling for completion
-      setTimeout(() => checkCompletion(response.prompt_id, timestamp, session.id), 2000);
+      setTimeout(() => checkCompletion(response.prompt_id, timestamp, sessionRecord.id), 2000);
       
     } catch (error) {
       console.error('Error generating asset:', error);
+      
+      // Update session status to failed if we have a session record
+      if (sessionRecord && sessionRecord.id) {
+        const { error: updateError } = await supabase
+          .from('generation_sessions')
+          .update({ 
+            status: 'failed', 
+            parameters: {
+              ...sessionRecord.parameters,
+              error: error.message
+            }
+          })
+          .eq('id', sessionRecord.id);
+          
+        if (updateError) {
+          console.error("Error updating session to failed:", updateError);
+        }
+      }
+      
       setStatus({ 
         message: `Error: ${error.message}`, 
         error: true 
@@ -118,59 +217,35 @@ const FluxGenerationForm = () => {
     }
   };
 
-  // Helper function to upload a file to Supabase and generate a public URL
-  const uploadFileAndGetPublicUrl = async (file, bucket) => {
-    try {
-      // Generate a unique filename
-      const timestamp = Date.now();
-      const safeFilename = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
-      const filename = `${timestamp}-${safeFilename}`;
-      
-      // First, ensure the bucket exists and is configured for public access
-      await SupabaseService.ensureBucketExists(bucket, true);
-      
-      // Upload the file to Supabase
-      const { data: uploadData, error: uploadError } = await supabase
-        .storage
-        .from(bucket)
-        .upload(filename, file, {
-          upsert: true,
-          cacheControl: '3600'
-        });
-        
-      if (uploadError) {
-        throw new Error(`Failed to upload image: ${uploadError.message}`);
-      }
-      
-      console.log("File uploaded successfully:", filename);
-      
-      // Get the public URL
-      const { data: publicUrlData } = supabase
-        .storage
-        .from(bucket)
-        .getPublicUrl(filename);
-      
-      if (!publicUrlData || !publicUrlData.publicUrl) {
-        throw new Error("Failed to get public URL for uploaded file");
-      }
-      
-      console.log("Public URL generated:", publicUrlData.publicUrl);
-      
-      return publicUrlData.publicUrl;
-      
-    } catch (error) {
-      console.error("Error in uploadFileAndGetPublicUrl:", error);
-      throw error;
-    }
-  };
-
-  // Function to check if generation is complete and process results
+  // 3. Let's fix the checkCompletion function to better handle session updates
   const checkCompletion = async (promptId, timestamp, sessionId) => {
     if (pollingAttempts >= 15) {
       setStatus({ 
-        message: 'Generation timed out. Check assets page later for results.', 
+        message: 'Generation timed out. You can try manually saving the image.', 
         error: true 
       });
+      
+      // Update session status to failed
+      try {
+        const { error: updateError } = await supabase
+          .from('generation_sessions')
+          .update({ 
+            status: 'failed',
+            parameters: {
+              error: 'Generation timed out'
+            } 
+          })
+          .eq('id', sessionId);
+          
+        if (updateError) {
+          console.error("Error updating session to failed:", updateError);
+        } else {
+          console.log("Session updated to failed");
+        }
+      } catch (updateError) {
+        console.error("Error updating session status:", updateError);
+      }
+      
       setIsGenerating(false);
       return;
     }
@@ -182,44 +257,89 @@ const FluxGenerationForm = () => {
     });
 
     try {
-      console.log("Checking generation status for timestamp:", timestamp);
+      console.log(`Checking generation for session ${sessionId}, timestamp: ${timestamp}`);
       
-      // Try to find the generated file by testing different filename patterns
-      const timeBasedFilenames = [
-        `${values.filenamePrefix}${timestamp}.png`,
-        `${values.filenamePrefix}${timestamp}_00001.png`,
-        `${values.filenamePrefix}${timestamp}_00001_.png`
-      ];
-
+      // Extract the parts we know
+      const prefix = values.filenamePrefix;
+      
+      // Check the ComfyUI output directory for matching files
       let isComplete = false;
       let outputFilename = null;
       
-      for (const filename of timeBasedFilenames) {
-        try {
-          const testUrl = `${API_BASE_URL}/view?filename=${encodeURIComponent(filename)}`;
-          console.log("Testing URL:", testUrl);
-          
-          const testResponse = await fetch(testUrl, { method: 'HEAD' });
-          
-          if (testResponse.ok) {
-            console.log("Found image at:", filename);
-            outputFilename = filename;
-            isComplete = true;
-            break;
+      // Try exact match first
+      const exactFilename = `${prefix}_${timestamp}_00001_.png`;
+      try {
+        const testUrl = `${API_BASE_URL}/view?filename=${encodeURIComponent(exactFilename)}`;
+        console.log("Testing URL:", testUrl);
+        
+        const testResponse = await fetch(testUrl, { method: 'HEAD' });
+        
+        if (testResponse.ok) {
+          console.log("✅ FOUND IMAGE:", exactFilename);
+          outputFilename = exactFilename;
+          isComplete = true;
+        }
+      } catch (e) {
+        console.log("Error checking filename:", exactFilename, e);
+      }
+      
+      // If exact match not found, try other patterns
+      if (!isComplete) {
+        // Try variations with serial numbers
+        const serials = ['00001', '00010', '00000', '00002', '00003'];
+        
+        for (const serial of serials) {
+          const patternFilename = `${prefix}_${timestamp}_${serial}_.png`;
+          try {
+            const testUrl = `${API_BASE_URL}/view?filename=${encodeURIComponent(patternFilename)}`;
+            console.log("Testing URL:", testUrl);
+            
+            const testResponse = await fetch(testUrl, { method: 'HEAD' });
+            
+            if (testResponse.ok) {
+              console.log("✅ FOUND IMAGE:", patternFilename);
+              outputFilename = patternFilename;
+              isComplete = true;
+              break;
+            }
+          } catch (e) {
+            console.log("Error checking filename:", patternFilename, e);
           }
-        } catch (e) {
-          console.log("Error checking filename:", filename, e);
         }
       }
 
       if (isComplete && outputFilename) {
+        console.log("Found output file, processing image:", outputFilename);
         await processGeneratedImage(outputFilename, sessionId);
       } else {
         // Not found yet, continue polling
+        console.log(`No matching files found, will try again in 2 seconds...`);
         setTimeout(() => checkCompletion(promptId, timestamp, sessionId), 2000);
       }
     } catch (error) {
       console.error("Error in checkCompletion:", error);
+      
+      // Update session status to failed
+      try {
+        const { error: updateError } = await supabase
+          .from('generation_sessions')
+          .update({ 
+            status: 'failed',
+            parameters: {
+              error: error.message
+            } 
+          })
+          .eq('id', sessionId);
+          
+        if (updateError) {
+          console.error("Error updating session to failed:", updateError);
+        } else {
+          console.log("Session updated to failed");
+        }
+      } catch (updateError) {
+        console.error("Error updating session status:", updateError);
+      }
+      
       setStatus({ 
         message: `Error checking generation status: ${error.message}`, 
         error: true 
@@ -228,7 +348,7 @@ const FluxGenerationForm = () => {
     }
   };
 
-  // Function to process the generated image once found
+  // 4. Finally, let's fix the processGeneratedImage function to properly update the session
   const processGeneratedImage = async (filename, sessionId) => {
     try {
       console.log("Processing generated image:", filename);
@@ -245,56 +365,130 @@ const FluxGenerationForm = () => {
       }
       
       const imageBlob = await imageResponse.blob();
-      
-      // Create a file object from the blob
-      const imageFile = new File([imageBlob], filename, { type: imageBlob.type });
+      console.log(`Image blob size: ${imageBlob.size} bytes`);
       
       // Upload to Supabase storage
-      const bucketName = 'images-2d';
       const storagePath = `${sessionId}/${filename}`;
+      console.log("Uploading to Supabase storage:", storagePath);
       
-      // Make sure the bucket exists
-      await SupabaseService.ensureBucketExists(bucketName);
+      // Ensure bucket exists
+      try {
+        const { data: buckets } = await supabase.storage.listBuckets();
+        const bucketExists = buckets.some(b => b.name === 'images-2d');
+        
+        if (!bucketExists) {
+          console.log("Creating storage bucket 'images-2d'");
+          await supabase.storage.createBucket('images-2d', {
+            public: false,
+            allowedMimeTypes: ['image/png'],
+            fileSizeLimit: 10485760 // 10MB
+          });
+        }
+      } catch (error) {
+        console.error("Error handling bucket:", error);
+      }
       
-      // Use uploadFile from SupabaseService for better error handling
-      await SupabaseService.uploadFile(bucketName, storagePath, imageFile);
+      const { data: uploadData, error: uploadError } = await supabase
+        .storage
+        .from('images-2d')
+        .upload(storagePath, imageBlob);
+        
+      if (uploadError) {
+        throw new Error(`Failed to upload image: ${uploadError.message}`);
+      }
+      
+      console.log("Upload successful:", uploadData);
       
       // Create asset record in database
       console.log("Creating asset record in database");
+      const { data: assetData, error: assetError } = await supabase
+        .from('assets')
+        .insert([
+          {
+            asset_type: 'image_2d',
+            storage_path: `images-2d/${storagePath}`,
+            parent_asset_id: null,
+            status: 'complete',
+            metadata: {
+              prompt: values.prompt,
+              negativePrompt: values.negativePrompt,
+              steps: values.steps,
+              reduxStrength: values.reduxImage ? values.reduxStrength : null,
+              useDepth: values.useDepth,
+              workflowType: useAdvancedWorkflow ? 'advanced' : 'simple',
+              filename: filename
+            }
+          }
+        ])
+        .select();
+        
+      if (assetError) {
+        throw new Error(`Failed to create asset record: ${assetError.message}`);
+      }
       
-      const assetData = {
-        asset_type: 'image_2d',
-        storage_path: `${bucketName}/${storagePath}`,
-        parent_asset_id: null, // This is an original generation
-        status: 'complete',
-        metadata: {
-          prompt: values.prompt,
-          negativePrompt: values.negativePrompt,
-          steps: values.steps,
-          advanced_mode: values.useAdvancedMode,
-          filename: filename,
-          timestamp: Date.now()
-        }
-      };
-      
-      // Create the asset record
-      const asset = await SupabaseService.createAsset(assetData);
-      
-      console.log("Asset created:", asset);
-      setCreatedAsset(asset);
+      console.log("Asset created:", assetData);
       
       // Link asset to session
-      await SupabaseService.linkAssetToSession(sessionId, asset.id);
+      if (assetData && assetData.length > 0) {
+        console.log("Linking asset to session");
+        const { error: sessionLinkError } = await supabase
+          .from('session_assets')
+          .insert([
+            {
+              session_id: sessionId,
+              asset_id: assetData[0].id
+            }
+          ]);
+          
+        if (sessionLinkError) {
+          console.error("Failed to link asset to session:", sessionLinkError);
+        } else {
+          console.log("Asset linked to session successfully");
+        }
+      }
       
-      // Update session status
-      await SupabaseService.updateSessionStatus(sessionId, 'completed');
+      // Update session status to completed
+      console.log("Updating session status to completed");
+      const { error: sessionUpdateError } = await supabase
+        .from('generation_sessions')
+        .update({ status: 'completed' })
+        .eq('id', sessionId);
+        
+      if (sessionUpdateError) {
+        console.error("Failed to update session status:", sessionUpdateError);
+      } else {
+        console.log("Session updated to completed successfully");
+      }
       
       setStatus({ 
         message: 'Generation completed successfully! You can view the result on the Assets page.', 
         error: false 
       });
+      
     } catch (error) {
       console.error("Error processing generated image:", error);
+      
+      // Update session status to failed
+      try {
+        const { error: updateError } = await supabase
+          .from('generation_sessions')
+          .update({ 
+            status: 'failed',
+            parameters: {
+              error: error.message
+            } 
+          })
+          .eq('id', sessionId);
+          
+        if (updateError) {
+          console.error("Error updating session to failed:", updateError);
+        } else {
+          console.log("Session updated to failed");
+        }
+      } catch (updateError) {
+        console.error("Error updating session status:", updateError);
+      }
+      
       setStatus({ 
         message: `Error processing generation results: ${error.message}`, 
         error: true 
@@ -304,30 +498,124 @@ const FluxGenerationForm = () => {
     }
   };
 
-  // Clear any existing file object URLs when component unmounts
-  useEffect(() => {
-    return () => {
-      if (values.inputImage instanceof File) {
-        URL.revokeObjectURL(URL.createObjectURL(values.inputImage));
+  // 5. Optional: Add a function to manually finalize the most recent session
+  const finalizeLastSession = async () => {
+    try {
+      setStatus({ message: 'Looking up the most recent session...', error: false });
+      
+      // Get the most recent initiated session
+      const { data: sessions, error: sessionsError } = await supabase
+        .from('generation_sessions')
+        .select('*')
+        .eq('status', 'initiated')
+        .order('created_at', { ascending: false })
+        .limit(1);
+        
+      if (sessionsError) {
+        throw new Error(`Failed to fetch sessions: ${sessionsError.message}`);
       }
-      if (values.reduxImage instanceof File) {
-        URL.revokeObjectURL(URL.createObjectURL(values.reduxImage));
+      
+      if (!sessions || sessions.length === 0) {
+        setStatus({ message: 'No initiated sessions found.', error: true });
+        return;
       }
-    };
-  }, [values.inputImage, values.reduxImage]);
+      
+      const sessionId = sessions[0].id;
+      console.log("Found session to finalize:", sessionId);
+      
+      // Prompt for the filename
+      const filename = prompt(
+        "Please enter the filename of the generated image (check ComfyUI output folder):",
+        `${values.filenamePrefix}_00001_.png`
+      );
+      
+      if (!filename) {
+        setStatus({ message: 'Operation cancelled.', error: true });
+        return;
+      }
+      
+      // Process the image
+      await processGeneratedImage(filename, sessionId);
+      
+    } catch (error) {
+      console.error("Error finalizing session:", error);
+      setStatus({ 
+        message: `Error finalizing session: ${error.message}`, 
+        error: true 
+      });
+    }
+  };
+
+
+    const uploadFile = async (file, bucket) => {
+    // Generate a unique filename
+    const timestamp = Date.now();
+    const safeFilename = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
+    const filename = `${timestamp}-${safeFilename}`;
+    
+    // Ensure the bucket exists
+    try {
+      const { data: buckets } = await supabase.storage.listBuckets();
+      const bucketExists = buckets.some(b => b.name === bucket);
+      
+      if (!bucketExists) {
+        console.log(`Creating storage bucket '${bucket}'`);
+        await supabase.storage.createBucket(bucket, {
+          public: true,
+          fileSizeLimit: 10485760 // 10MB
+        });
+      }
+    } catch (error) {
+      console.error("Error ensuring bucket exists:", error);
+      // Continue anyway, in case the error is just with checking
+    }
+    
+    // Upload the file to Supabase
+    const { data: uploadData, error: uploadError } = await supabase
+      .storage
+      .from(bucket)
+      .upload(filename, file, {
+        upsert: true,
+        cacheControl: '3600'
+      });
+      
+    if (uploadError) {
+      throw new Error(`Failed to upload image: ${uploadError.message}`);
+    }
+    
+    console.log("File uploaded successfully:", filename);
+    
+    // Return the storage path (bucket/filename)
+    return `${bucket}/${filename}`;
+  };
 
   return (
     <FormContainer>
-      <h2>Generate Vehicle with Flux Workflow</h2>
+      <h2>Generate with Flux Workflow</h2>
       
       <FormInfo>
         <InfoIcon>ℹ️</InfoIcon>
         <InfoText>
-          This tool uses the Flux workflow in ComfyUI to generate post-apocalyptic vehicle images. 
-          Enter a prompt, adjust the settings, and optionally provide input images for more controlled results.
-          The advanced mode uses depth conditioning for more structured vehicle generation.
+          This form allows you to generate images with the Flux model. Simply enter a prompt, 
+          adjust the steps as needed, and optionally provide input images. 
+          The advanced mode supports Redux image styling and depth conditioning for more structured results.
         </InfoText>
       </FormInfo>
+      
+      <WorkflowSelector>
+        <WorkflowOption 
+          active={!useAdvancedWorkflow} 
+          onClick={() => setUseAdvancedWorkflow(false)}
+        >
+          Simple Mode
+        </WorkflowOption>
+        <WorkflowOption 
+          active={useAdvancedWorkflow} 
+          onClick={() => setUseAdvancedWorkflow(true)}
+        >
+          Advanced Mode
+        </WorkflowOption>
+      </WorkflowSelector>
       
       <Form onSubmit={handleSubmit}>
         <FormGroup>
@@ -338,7 +626,6 @@ const FluxGenerationForm = () => {
             placeholder="Enter your prompt"
             rows={4}
           />
-          <SmallHelp>Try keywords like: armored, rusted, desert, weaponized, mutant, cyberpunk</SmallHelp>
         </FormGroup>
         
         <FormGroup>
@@ -364,25 +651,7 @@ const FluxGenerationForm = () => {
         </FormGroup>
         
         <FormGroup>
-          <Label>Advanced Mode</Label>
-          <CheckboxContainer>
-            <Checkbox
-              type="checkbox"
-              checked={values.useAdvancedMode}
-              onChange={(e) => handleChange('useAdvancedMode', e.target.checked)}
-              id="advancedMode"
-            />
-            <CheckboxLabel htmlFor="advancedMode">
-              Use depth conditioning for better structure
-            </CheckboxLabel>
-          </CheckboxContainer>
-          <SmallHelp>
-            Advanced mode works best with an input image. It uses depth estimation to create more structured vehicles.
-          </SmallHelp>
-        </FormGroup>
-        
-        <FormGroup>
-          <Label>Input Image {values.useAdvancedMode ? '(Recommended for Advanced Mode)' : '(Optional)'}</Label>
+          <Label>Input Image (Optional)</Label>
           <FileInput
             type="file"
             accept="image/*"
@@ -399,33 +668,63 @@ const FluxGenerationForm = () => {
                 src={URL.createObjectURL(values.inputImage)} 
                 alt="Input Image" 
               />
-              <small>This image will influence the structure of the generated vehicle</small>
+              {useAdvancedWorkflow && (
+                <FormCheck>
+                  <input
+                    type="checkbox"
+                    id="useDepth"
+                    checked={values.useDepth}
+                    onChange={(e) => handleChange('useDepth', e.target.checked)}
+                  />
+                  <label htmlFor="useDepth">Use depth conditioning</label>
+                </FormCheck>
+              )}
+              <small>This image provides structure and layout guidance</small>
             </PreviewContainer>
           )}
         </FormGroup>
 
-        <FormGroup>
-          <Label>Redux Reference Image (Optional)</Label>
-          <FileInput
-            type="file"
-            accept="image/*"
-            onChange={(e) => {
-              if (e.target.files[0]) {
-                handleChange('reduxImage', e.target.files[0]);
-              }
-            }}
-          />
-          {values.reduxImage && (
-            <PreviewContainer>
-              <h4>Redux Reference:</h4>
-              <PreviewImage 
-                src={URL.createObjectURL(values.reduxImage)} 
-                alt="Redux Reference" 
+        {useAdvancedWorkflow && (
+          <>
+            <FormGroup>
+              <Label>Redux Reference Image (Optional)</Label>
+              <FileInput
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  if (e.target.files[0]) {
+                    handleChange('reduxImage', e.target.files[0]);
+                  }
+                }}
               />
-              <small>This image will influence the style of the generation</small>
-            </PreviewContainer>
-          )}
-        </FormGroup>
+              {values.reduxImage && (
+                <PreviewContainer>
+                  <h4>Redux Reference:</h4>
+                  <PreviewImage 
+                    src={URL.createObjectURL(values.reduxImage)} 
+                    alt="Redux Reference" 
+                  />
+                  <SliderContainer>
+                    <SliderLabel>Redux Influence: {values.reduxStrength.toFixed(2)}</SliderLabel>
+                    <Slider 
+                      type="range" 
+                      min="0" 
+                      max="1" 
+                      step="0.05"
+                      value={values.reduxStrength}
+                      onChange={(e) => handleChange('reduxStrength', parseFloat(e.target.value))}
+                    />
+                    <SliderMarkers>
+                      <span>Subtle</span>
+                      <span>Strong</span>
+                    </SliderMarkers>
+                  </SliderContainer>
+                  <small>This image influences the style and aesthetic of the generation</small>
+                </PreviewContainer>
+              )}
+            </FormGroup>
+          </>
+        )}
         
         <FormGroup>
           <Label>Filename Prefix</Label>
@@ -437,20 +736,9 @@ const FluxGenerationForm = () => {
         </FormGroup>
         
         <Button type="submit" disabled={isGenerating}>
-          {isGenerating ? 'Generating...' : 'Generate Vehicle'}
+          {isGenerating ? 'Generating...' : 'Generate Image'}
         </Button>
       </Form>
-      
-      {createdAsset && (
-        <SuccessContainer>
-          <h3>Generation Successful!</h3>
-          <p>Your vehicle has been generated and saved to the asset library.</p>
-          <ButtonGroup>
-            <Button onClick={() => navigate('/assets')}>View All Assets</Button>
-            <Button onClick={() => navigate(`/assets/${createdAsset.id}`)} className="secondary">View This Asset</Button>
-          </ButtonGroup>
-        </SuccessContainer>
-      )}
       
       <TroubleshootingSection>
         <h3>Troubleshooting</h3>
@@ -518,6 +806,8 @@ const FormContainer = styled.div`
   margin: 0 auto;
 `;
 
+
+
 const Form = styled.form`
   display: flex;
   flex-direction: column;
@@ -569,12 +859,6 @@ const PreviewContainer = styled.div`
     margin-top: 0;
     margin-bottom: 8px;
   }
-  
-  small {
-    display: block;
-    margin-top: 8px;
-    color: #666;
-  }
 `;
 
 const PreviewImage = styled.img`
@@ -602,12 +886,6 @@ const Button = styled.button`
     background-color: #cccccc;
     cursor: not-allowed;
   }
-`;
-
-const ButtonGroup = styled.div`
-  display: flex;
-  gap: 10px;
-  margin-top: 12px;
 `;
 
 const TroubleshootingSection = styled.div`
@@ -662,34 +940,91 @@ const SmallHelp = styled.small`
   margin-top: 4px;
 `;
 
-const CheckboxContainer = styled.div`
+const WorkflowSelector = styled.div`
   display: flex;
-  align-items: center;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 20px;
 `;
 
-const Checkbox = styled.input`
-  margin-right: 8px;
-`;
-
-const CheckboxLabel = styled.label`
-  font-weight: normal;
-`;
-
-const SuccessContainer = styled.div`
-  margin-top: 20px;
-  padding: 16px;
-  background-color: #e8f5e9;
-  border: 1px solid #c8e6c9;
-  border-radius: 8px;
+const WorkflowOption = styled.div`
+  flex: 1;
+  padding: 10px 15px;
   text-align: center;
+  background-color: ${props => props.active ? '#007bff' : '#f5f5f5'};
+  color: ${props => props.active ? 'white' : '#333'};
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-right: 1px solid #ddd;
   
-  h3 {
-    color: #2e7d32;
-    margin-top: 0;
+  &:last-child {
+    border-right: none;
   }
   
-  p {
-    margin-bottom: 16px;
+  &:hover {
+    background-color: ${props => props.active ? '#0069d9' : '#e9e9e9'};
+  }
+`;
+
+const SliderContainer = styled.div`
+  margin: 15px 0;
+  padding: 10px;
+  border-radius: 4px;
+  background-color: white;
+`;
+
+const SliderLabel = styled.div`
+  margin-bottom: 8px;
+  font-weight: bold;
+  color: #555;
+`;
+
+const Slider = styled.input`
+  width: 100%;
+  height: 8px;
+  background: #e0e0e0;
+  outline: none;
+  border-radius: 4px;
+  
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    background: #007bff;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  
+  &::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    background: #007bff;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+`;
+
+const SliderMarkers = styled.div`
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-size: 0.8rem;
+  color: #666;
+`;
+
+const FormCheck = styled.div`
+  display: flex;
+  align-items: center;
+  margin: 10px 0;
+  
+  input {
+    margin-right: 8px;
+  }
+  
+  label {
+    font-size: 0.9rem;
   }
 `;
 

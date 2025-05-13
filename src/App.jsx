@@ -6,6 +6,7 @@ import AssetsPage from './pages/AssetsPage';
 import AssetDetailPage from './pages/AssetDetailPage';
 import GenerationPage from './pages/GenerationPage';
 import SessionsPage from './pages/SessionsPage';
+import Base64TestPage from './pages/Base64TestPage';
 
 import ComfyUITroubleshooter from './components/ComfyUITroubleshooter';
 
@@ -105,6 +106,10 @@ function App() {
             <Route path="/assets/:id" element={<AssetDetailPage />} />
             <Route path="/sessions" element={<SessionsPage />} />
             <Route path="/generate" element={<GenerationPage />} />
+            <Route path="/base64-test" element={<Base64TestPage />} />
+            
+
+            
           </Routes>
         </MainContent>
         

@@ -1,360 +1,582 @@
 // src/services/comfyService.js
-import axios from 'axios';
 
-// ComfyUI API base URL (configurable via environment variable)
+// Base API URL for ComfyUI
 export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
 
 /**
  * Service for interacting with ComfyUI
  */
 const ComfyService = {
+  
   /**
-   * Test connection to ComfyUI
+   * Test connection to ComfyUI server
    */
   async testConnection() {
     try {
-      // Try to get object_info to verify the API is up
-      const response = await axios.get(`${API_BASE_URL}/object_info`, {
-        timeout: 5000 // 5 second timeout
+      const response = await fetch(`${API_BASE_URL}/system_stats`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
       });
       
-      return { 
-        success: true, 
-        data: response.data 
-      };
+      if (response.ok) {
+        const data = await response.json();
+        return { success: true, data };
+      } else {
+        return { 
+          success: false, 
+          error: { 
+            status: response.status, 
+            message: `Server returned ${response.status}` 
+          } 
+        };
+      }
     } catch (error) {
-      console.error("ComfyUI connection test failed:", error);
-      
       return { 
         success: false, 
-        error: {
-          message: error.message,
-          details: error.response?.data || 'No response data'
-        }
+        error: { 
+          message: error.message || "Network error connecting to ComfyUI" 
+        } 
       };
     }
   },
   
   /**
-   * Queue a workflow prompt to ComfyUI
-   * @param {Object} workflow - The workflow definition
-   * @returns {Promise<Object>} - The ComfyUI response
+   * Queue a workflow prompt in ComfyUI
    */
   async queuePrompt(workflow) {
-    try {
-      const response = await axios.post(`${API_BASE_URL}/prompt`, {
-        prompt: workflow,
-        client_id: "nft-generator-" + Date.now()
-      });
-      
-      return response.data;
-    } catch (error) {
-      console.error("Error queueing prompt:", error);
-      
-      const errorMessage = error.response?.data?.error?.message || error.message;
-      const nodeErrors = error.response?.data?.node_errors || {};
-      
-      // Provide more detailed error info
-      const errorDetails = Object.entries(nodeErrors).map(([nodeId, errors]) => {
-        return `Node ${nodeId} (${errors.class_type}): ${errors.errors[0]?.message || 'Unknown error'}`;
-      }).join('; ');
-      
-      throw new Error(`Failed to queue prompt: ${errorMessage} ${errorDetails ? `- ${errorDetails}` : ''}`);
+    console.log("Queueing prompt with workflow:", workflow);
+    
+    const response = await fetch(`${API_BASE_URL}/prompt`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ prompt: workflow }),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`Failed to queue prompt: ${response.status} - ${JSON.stringify(errorData)}`);
     }
+    
+    return await response.json();
   },
   
   /**
-   * Upload an image directly to ComfyUI server
-   * @param {File} imageFile - The image file to upload
-   * @returns {Promise<string>} - Filename on ComfyUI server
+   * Create a standard Flux workflow with optional image inputs
    */
-  async uploadImageToComfyUI(imageFile) {
-    try {
-      // Create a unique filename
-      const extension = imageFile.name.split('.').pop();
-      const uniqueFilename = `uploaded_${Date.now()}.${extension}`;
-      
-      // Create FormData
-      const formData = new FormData();
-      formData.append('image', imageFile, uniqueFilename);
-      formData.append('overwrite', 'true');
-      
-      // Upload to ComfyUI
-      const response = await axios.post(`${API_BASE_URL}/upload/image`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      });
-      
-      if (response.status === 200) {
-        console.log("Image uploaded successfully to ComfyUI:", uniqueFilename);
-        // Return just the filename for use in LoadImage node
-        return uniqueFilename;
-      } else {
-        throw new Error(`Upload failed with status: ${response.status}`);
-      }
-    } catch (error) {
-      console.error("Error uploading image to ComfyUI:", error);
-      throw new Error(`Failed to upload image: ${error.message}`);
-    }
-  },
-  
-  /**
-   * Create a basic Flux workflow for image generation
-   * @param {Object} params - Parameters for the workflow
-   * @returns {Object} - The workflow definition and a timestamp
-   */
-  createFluxWorkflow({ prompt, negativePrompt = "", steps = 28, inputImageFilename = null, reduxImageFilename = null, filenamePrefix = "generated" }) {
-    const timestamp = Date.now();
+  createFluxWorkflow({ prompt, steps = 20, filenamePrefix = 'Otherides-2d' }) {
+    console.log("Creating standard Flux workflow with params:", { prompt, steps, filenamePrefix });
     
-    // Define constants for image dimensions
-    const width = 1024;
-    const height = 1024;
+    // Add timestamp to make the generation unique
+    const timestamp = new Date().getTime();
     
-    // Basic workflow definition based on the working example
+    // Base workflow object - simplified for example
     const workflow = {
-      // Constants for dimensions
-      "54": {
-        "class_type": "INTConstant",
+      // This would contain the standard basic workflow nodes
+      // Simplified for this example
+      "3": {
         "inputs": {
-          "value": width
-        }
+          "text": filenamePrefix
+        },
+        "class_type": "Text",
       },
-      "55": {
-        "class_type": "INTConstant",
+      "5": {
         "inputs": {
-          "value": height
-        }
-      },
-      
-      // Model loaders
-      "26": {
-        "class_type": "DualCLIPLoader",
-        "inputs": {
-          "clip_name1": "Flux/t5xxl_fp8_e4m3fn.safetensors",
-          "clip_name2": "clip_l.safetensors",
-          "type": "flux",
-          "device": "default"
-        }
-      },
-      "27": {
-        "class_type": "UNETLoader",
-        "inputs": {
-          "unet_name": "blackforest/flux1-dev.sft",
-          "weight_dtype": "fp8_e4m3fn"
-        }
-      },
-      "10": {
-        "class_type": "VAELoader",
-        "inputs": {
-          "vae_name": "ae.sft"
-        }
-      },
-      
-      // Prompt encoding
-      "50": {
+          "text": prompt
+        },
         "class_type": "CLIPTextEncode",
-        "inputs": {
-          "text": prompt,
-          "clip": ["26", 0]
-        }
       },
-      "51": {
-        "class_type": "CLIPTextEncode",
+      "6": {
         "inputs": {
-          "text": negativePrompt || "",
-          "clip": ["26", 0]
-        }
+          "steps": steps
+        },
+        "class_type": "KSampler",
       },
-      
-      "60": {
-        "class_type": "FluxGuidance",
+      "7": {
         "inputs": {
-          "guidance": 15,
-          "conditioning": ["50", 0]
-        }
-      },
-      
-      "19": {
-        "class_type": "ModelSamplingFlux",
-        "inputs": {
-          "max_shift": 1.25,
-          "base_shift": 0.5,
-          "width": width,
-          "height": height,
-          "model": ["27", 0]
-        }
-      },
-      
-      // Decoding and saving
-      "8": {
-        "class_type": "VAEDecode",
-        "inputs": {
-          "samples": ["3", 0],
-          "vae": ["10", 0]
-        }
-      },
-      "9": {
+          "filename_prefix": [
+            "3",
+            0
+          ],
+          "images": [
+            "6",
+            0
+          ]
+        },
         "class_type": "SaveImage",
-        "inputs": {
-          "filename_prefix": `${filenamePrefix}${timestamp}`,
-          "images": ["8", 0]
-        }
       }
     };
-    
-    if (inputImageFilename) {
-      // If an input image is provided, use depth conditioning
-      
-      // Depth model loading
-      workflow["61"] = {
-        "class_type": "DownloadAndLoadDepthAnythingV2Model",
-        "inputs": {
-          "model": "depth_anything_v2_vitl_fp16.safetensors"
-        }
-      };
-      
-      // Add nodes for input image and depth conditioning
-      workflow["56"] = {
-        "class_type": "LoadImage",
-        "inputs": {
-          "image": inputImageFilename
-        }
-      };
-      
-      workflow["57"] = {
-        "class_type": "ImageResize+",
-        "inputs": {
-          "width": ["54", 0],
-          "height": ["55", 0],
-          "interpolation": "bicubic",
-          "method": "keep proportion",
-          "condition": "always",
-          "multiple_of": 16,
-          "image": ["56", 0]
-        }
-      };
-      
-      workflow["62"] = {
-        "class_type": "DepthAnything_V2",
-        "inputs": {
-          "da_model": ["61", 0],
-          "images": ["57", 0]
-        }
-      };
-      
-      workflow["59"] = {
-        "class_type": "InstructPixToPixConditioning",
-        "inputs": {
-          "positive": ["60", 0],
-          "negative": ["51", 0],
-          "vae": ["10", 0],
-          "pixels": ["62", 0]
-        }
-      };
-      
-      // Empty latent image based on resized input image
-      workflow["53"] = {
-        "class_type": "EmptyLatentImage",
-        "inputs": {
-          "width": ["57", 1],
-          "height": ["57", 2],
-          "batch_size": 1
-        }
-      };
-      
-      // Optional preview image node
-      workflow["58"] = {
-        "class_type": "PreviewImage",
-        "inputs": {
-          "images": ["57", 0]
-        }
-      };
-      
-    } else {
-      // If no input image, just use Empty Latent directly without any noise or image input
-      
-      // Empty latent image with fixed dimensions
-      workflow["53"] = {
-        "class_type": "EmptyLatentImage",
-        "inputs": {
-          "width": width,
-          "height": height,
-          "batch_size": 1
-        }
-      };
-      
-      // Simple conditioning without depth
-      workflow["59"] = {
-        "class_type": "CLIPTextEncode",
-        "inputs": {
-          "text": prompt,
-          "clip": ["26", 0]
-        }
-      };
-    }
-    
-    // Add KSampler node - must be added after node 59 is defined
-    workflow["3"] = {
-      "class_type": "KSampler",
-      "inputs": {
-        "seed": Math.floor(Math.random() * 1000000),
-        "steps": steps,
-        "cfg": 1,
-        "sampler_name": "ddim",
-        "scheduler": "ddim_uniform",
-        "denoise": 1,
-        "model": ["19", 0],
-        "positive": ["59", 0],
-        "negative": inputImageFilename ? ["59", 1] : ["51", 0],
-        "latent_image": ["53", 0]
-      }
-    };
-    
-    // If a redux image filename is provided, add redux conditioning
-    if (reduxImageFilename) {
-      workflow["70"] = {
-        "class_type": "LoadImage",
-        "inputs": {
-          "image": reduxImageFilename
-        }
-      };
-      
-      // Note: Redux implementation would need to be added based on actual ComfyUI workflow
-    }
-    
+
+    // We'll let Base64Service handle the image loading
     return { workflow, timestamp };
   },
   
   /**
-   * Create an advanced Flux workflow with depth conditioning
-   * @param {Object} params - Parameters for the workflow
-   * @returns {Object} - The workflow definition and a timestamp
+   * Create an advanced Flux workflow with Redux styling and depth conditioning
    */
-  createAdvancedFluxWorkflow({ prompt, negativePrompt = "", steps = 28, inputImageFilename = null, reduxImageFilename = null, filenamePrefix = "generated-adv" }) {
-    // For advanced workflow, we'll just use the same workflow since it already includes depth conditioning
-    return this.createFluxWorkflow({ 
-      prompt, 
-      negativePrompt, 
-      steps, 
-      inputImageFilename,
-      reduxImageFilename,
-      filenamePrefix 
+  createFluxAdvancedWorkflow({ 
+    prompt, 
+    steps = 20, 
+    reduxStrength = 0.5,
+    useDepth = true,
+    filenamePrefix = 'Otherides-2d_' 
+  }) {
+    console.log("Creating advanced Flux workflow with params:", { 
+      prompt, steps, reduxStrength, useDepth, filenamePrefix 
     });
-  },
-  
-  /**
-   * Get the history of generated images
-   * @returns {Promise<Array>} - List of generated images
-   */
-  async getHistory() {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/history`);
-      return response.data;
-    } catch (error) {
-      console.error("Error getting history:", error);
-      throw new Error(`Failed to get history: ${error.message}`);
+    
+    // Add timestamp to make the generation unique
+    const timestamp = new Date().getTime();
+    
+    // Start with the base Redux workflow structure from the provided example
+    const workflow = {
+      "77": {
+        "inputs": {
+          "filename_prefix": [
+            "82",
+            0
+          ],
+          "images": [
+            "81",
+            0
+          ]
+        },
+        "class_type": "SaveImage",
+        "_meta": {
+          "title": "Save Image"
+        }
+      },
+      "78": {
+        "inputs": {
+          "unet_name": "blackforest/flux1-depth-dev.safetensors",
+          "weight_dtype": "fp8_e4m3fn"
+        },
+        "class_type": "UNETLoader",
+        "_meta": {
+          "title": "Load Diffusion Model"
+        }
+      },
+      "79": {
+        "inputs": {
+          "text": "",
+          "clip": [
+            "80",
+            0
+          ]
+        },
+        "class_type": "CLIPTextEncode",
+        "_meta": {
+          "title": "CLIP Text Encode (Prompt)"
+        }
+      },
+      "80": {
+        "inputs": {
+          "clip_name1": "Flux/t5xxl_fp16.safetensors",
+          "clip_name2": "Flux/clip_l.safetensors",
+          "type": "flux",
+          "device": "default"
+        },
+        "class_type": "DualCLIPLoader",
+        "_meta": {
+          "title": "DualCLIPLoader"
+        }
+      },
+      "81": {
+        "inputs": {
+          "samples": [
+            "100",
+            0
+          ],
+          "vae": [
+            "90",
+            0
+          ]
+        },
+        "class_type": "VAEDecode",
+        "_meta": {
+          "title": "VAE Decode"
+        }
+      },
+      "82": {
+        "inputs": {
+          "text": `${filenamePrefix}_${timestamp}`
+        },
+        "class_type": "Text Multiline",
+        "_meta": {
+          "title": "Text Multiline"
+        }
+      },
+      "83": {
+        "inputs": {
+          "value": 1024
+        },
+        "class_type": "INTConstant",
+        "_meta": {
+          "title": "Width"
+        }
+      },
+      "84": {
+        "inputs": {
+          "value": 1024
+        },
+        "class_type": "INTConstant",
+        "_meta": {
+          "title": "Height"
+        }
+      },
+      "85": {
+        "inputs": {
+          "image": "placeholder.png"  // This will be replaced by Base64Service
+        },
+        "class_type": "LoadImage",
+        "_meta": {
+          "title": "Load Image (Placeholder)"
+        }
+      },
+      "86": {
+        "inputs": {
+          "width": [
+            "83",
+            0
+          ],
+          "height": [
+            "84",
+            0
+          ],
+          "interpolation": "bicubic",
+          "method": "keep proportion",
+          "condition": "always",
+          "multiple_of": 16,
+          "image": [
+            "85", 
+            0
+          ]
+        },
+        "class_type": "ImageResize+",
+        "_meta": {
+          "title": "🔧 Image Resize"
+        }
+      },
+      "88": {
+        "inputs": {
+          "width": [
+            "86",
+            1
+          ],
+          "height": [
+            "86",
+            2
+          ],
+          "batch_size": 1
+        },
+        "class_type": "EmptyLatentImage",
+        "_meta": {
+          "title": "Empty Latent Image"
+        }
+      },
+      "89": {
+        "inputs": {
+          "text": prompt,
+          "clip": [
+            "80",
+            0
+          ]
+        },
+        "class_type": "CLIPTextEncode",
+        "_meta": {
+          "title": "CLIP Text Encode (Prompt)"
+        }
+      },
+      "90": {
+        "inputs": {
+          "vae_name": "ae.sft"
+        },
+        "class_type": "VAELoader",
+        "_meta": {
+          "title": "Load VAE"
+        }
+      },
+      "92": {
+        "inputs": {
+          "max_shift": 1.25,
+          "base_shift": 0.5,
+          "width": 1024,
+          "height": 1024,
+          "model": [
+            "78",
+            0
+          ]
+        },
+        "class_type": "ModelSamplingFlux",
+        "_meta": {
+          "title": "ModelSamplingFlux"
+        }
+      },
+      "94": {
+        "inputs": {
+          "image": "placeholder.png"  // This will be replaced by Base64Service
+        },
+        "class_type": "LoadImage",
+        "_meta": {
+          "title": "Load Redux Image (Placeholder)"
+        }
+      },
+      "95": {
+        "inputs": {
+          "clip_name": "sigclip_vision_patch14_384.safetensors"
+        },
+        "class_type": "CLIPVisionLoader",
+        "_meta": {
+          "title": "Load CLIP Vision"
+        }
+      },
+      "96": {
+        "inputs": {
+          "style_model_name": "flux1-redux-dev.safetensors"
+        },
+        "class_type": "StyleModelLoader",
+        "_meta": {
+          "title": "Load Style Model"
+        }
+      },
+      "100": {
+        "inputs": {
+          "noise": [
+            "102",
+            0
+          ],
+          "guider": [
+            "103",
+            0
+          ],
+          "sampler": [
+            "104",
+            0
+          ],
+          "sigmas": [
+            "109",
+            0
+          ],
+          "latent_image": [
+            "88",
+            0
+          ]
+        },
+        "class_type": "SamplerCustomAdvanced",
+        "_meta": {
+          "title": "SamplerCustomAdvanced"
+        }
+      },
+      "102": {
+        "inputs": {
+          "noise_seed": Math.floor(Math.random() * 1000000)
+        },
+        "class_type": "RandomNoise",
+        "_meta": {
+          "title": "RandomNoise"
+        }
+      },
+      "103": {
+        "inputs": {
+          "model": [
+            "92",
+            0
+          ],
+          "conditioning": [
+            "108",
+            0
+          ]
+        },
+        "class_type": "BasicGuider",
+        "_meta": {
+          "title": "BasicGuider"
+        }
+      },
+      "104": {
+        "inputs": {
+          "sampler_name": "euler"
+        },
+        "class_type": "KSamplerSelect",
+        "_meta": {
+          "title": "KSamplerSelect"
+        }
+      },
+      "105": {
+        "inputs": {
+          "text": prompt.split(',').slice(0, 5).join(', '), // Use first few tags for condensed prompt
+          "clip": [
+            "80",
+            0
+          ]
+        },
+        "class_type": "CLIPTextEncode",
+        "_meta": {
+          "title": "CLIP Text Encode (Prompt)"
+        }
+      },
+      "109": {
+        "inputs": {
+          "scheduler": "simple",
+          "steps": steps,
+          "denoise": 1,
+          "model": [
+            "92",
+            0
+          ]
+        },
+        "class_type": "BasicScheduler",
+        "_meta": {
+          "title": "BasicScheduler"
+        }
+      },
+      "111": {
+        "inputs": {
+          "model": "depth_anything_v2_vitl_fp16.safetensors"
+        },
+        "class_type": "DownloadAndLoadDepthAnythingV2Model",
+        "_meta": {
+          "title": "DownloadAndLoadDepthAnythingV2Model"
+        }
+      },
+      "113": {
+        "inputs": {
+          "guidance": 15,
+          "conditioning": [
+            "114",
+            0
+          ]
+        },
+        "class_type": "FluxGuidance",
+        "_meta": {
+          "title": "FluxGuidance"
+        }
+      },
+      "114": {
+        "inputs": {
+          "conditioning_to": [
+            "105",
+            0
+          ],
+          "conditioning_from": [
+            "89",
+            0
+          ]
+        },
+        "class_type": "ConditioningConcat",
+        "_meta": {
+          "title": "Conditioning (Concat)"
+        }
+      }
+    };
+    
+    // Add depth extraction if enabled
+    if (useDepth) {
+      workflow["106"] = {
+        "inputs": {
+          "da_model": [
+            "111",
+            0
+          ],
+          "images": [
+            "86",
+            0
+          ]
+        },
+        "class_type": "DepthAnything_V2",
+        "_meta": {
+          "title": "Depth Anything V2"
+        }
+      };
+      
+      workflow["107"] = {
+        "inputs": {
+          "positive": [
+            "113",
+            0
+          ],
+          "negative": [
+            "79",
+            0
+          ],
+          "vae": [
+            "90",
+            0
+          ],
+          "pixels": [
+            "106",
+            0
+          ]
+        },
+        "class_type": "InstructPixToPixConditioning",
+        "_meta": {
+          "title": "InstructPixToPixConditioning"
+        }
+      };
+      
+      // Connect to style application without depending on reduxImageUrl
+      workflow["108"] = {
+        "inputs": {
+          "strength": reduxStrength,
+          "conditioning": [
+            "107",
+            0
+          ],
+          "style_model": [
+            "96",
+            0
+          ]
+          // clip_vision_output will be added in the form handler if needed
+        },
+        "class_type": "StyleModelApplyAdvanced",
+        "_meta": {
+          "title": "🖌️ Style Model Apply (Advanced)"
+        }
+      };
+    } else {
+      // No depth conditioning - direct style application to conditioning
+      workflow["108"] = {
+        "inputs": {
+          "strength": reduxStrength,
+          "conditioning": [
+            "89",
+            0
+          ],
+          "style_model": [
+            "96",
+            0
+          ]
+          // clip_vision_output will be added in the form handler if needed
+        },
+        "class_type": "StyleModelApplyAdvanced",
+        "_meta": {
+          "title": "🖌️ Style Model Apply (Advanced)"
+        }
+      };
     }
+    
+    // Add CLIPVisionEncode node for Redux (will be connected in form handler if needed)
+    workflow["93"] = {
+      "inputs": {
+        "crop": "center",
+        "clip_vision": [
+          "95",
+          0
+        ],
+        "image": [
+          "94",
+          0
+        ]
+      },
+      "class_type": "CLIPVisionEncode",
+      "_meta": {
+        "title": "CLIP Vision Encode"
+      }
+    };
+    
+    return { workflow, timestamp };
   }
 };
 
