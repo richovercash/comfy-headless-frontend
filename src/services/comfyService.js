@@ -1,4 +1,6 @@
 // src/services/comfyService.js
+// src/services/comfyService.js - Updated for LoRA support
+import loraService from './loraService';
 
 // Base API URL for ComfyUI
 export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
@@ -42,6 +44,12 @@ const ComfyService = {
     }
   },
   
+
+
+
+
+
+
   /**
    * Queue a workflow prompt in ComfyUI
    */
@@ -63,11 +71,153 @@ const ComfyService = {
     
     return await response.json();
   },
+
+
+  /**
+   * Create a Flux workflow with LoRA support
+   * @param {Object} options - Workflow configuration options
+   * @returns {Object} Workflow object and timestamp
+   */
+  createFluxWorkflow({
+    prompt,
+    negativePrompt = 'low quality, bad anatomy, blurry, pixelated, distorted, deformed',
+    steps = 28,
+    inputImageUrl = null,
+    reduxImageUrl = null,
+    filenamePrefix = 'Otherides-2d',
+    loras = [] // New parameter for LoRAs
+  }) {
+    console.log('Creating Flux workflow with options:', {
+      prompt,
+      steps,
+      inputImageUrl: inputImageUrl ? 'provided' : 'none',
+      reduxImageUrl: reduxImageUrl ? 'provided' : 'none',
+      filenamePrefix,
+      loraCount: loras.length
+    });
+    
+    // Generate timestamp for this workflow
+    const timestamp = Date.now();
+    
+    // Process activation words from LoRAs
+    const activationWords = loraService.generateActivationWordsPrompt(loras);
+    
+    // Combine prompt with activation words if available
+    const fullPrompt = activationWords 
+      ? `${prompt}, ${activationWords}`
+      : prompt;
+    
+    console.log('Full prompt with activation words:', fullPrompt);
+    
+    // Get a workflow template based on depth conditioning options
+    let workflow;
+    
+    if (inputImageUrl && reduxImageUrl) {
+      // Advanced workflow with both input image and redux reference
+      workflow = this._createAdvancedWorkflow({
+        prompt: fullPrompt,
+        negativePrompt,
+        steps,
+        inputImageUrl,
+        reduxImageUrl,
+        filenamePrefix,
+        timestamp
+      });
+    } else if (inputImageUrl) {
+      // Basic workflow with input image only
+      workflow = this._createBasicWorkflow({
+        prompt: fullPrompt,
+        negativePrompt,
+        steps,
+        inputImageUrl,
+        filenamePrefix,
+        timestamp
+      });
+    } else {
+      // Simple workflow without image references
+      workflow = this._createSimpleWorkflow({
+        prompt: fullPrompt,
+        negativePrompt,
+        steps,
+        filenamePrefix,
+        timestamp
+      });
+    }
+    
+    // Apply LoRA configuration if provided
+    if (loras && loras.length > 0) {
+      workflow = loraService.updateWorkflowWithLoras(workflow, loras);
+    }
+    
+    // FIX: Verify all node references exist in the workflow
+    workflow = this._verifyNodeReferences(workflow);
+    
+    console.log('Workflow created');
+    
+    return {
+      workflow,
+      timestamp: timestamp.toString()
+    };
+  },
+
+  /**
+   * Verifies that all node references in the workflow exist
+   * @param {Object} workflow - The workflow to verify
+   * @returns {Object} Validated workflow with fixes
+   */
+  _verifyNodeReferences(workflow) {
+    const nodes = Object.keys(workflow);
+    const fixedWorkflow = {...workflow};
+    
+    // Check each node's inputs
+    for (const nodeId in fixedWorkflow) {
+      const node = fixedWorkflow[nodeId];
+      
+      if (node.inputs) {
+        // For each input that references another node
+        for (const inputKey in node.inputs) {
+          const input = node.inputs[inputKey];
+          
+          if (Array.isArray(input) && input.length >= 1 && typeof input[0] === 'string') {
+            const referencedNodeId = input[0];
+            
+            // If the referenced node doesn't exist, log an error and fix it
+            if (!nodes.includes(referencedNodeId)) {
+              console.error(`Node ${nodeId} references non-existent node ${referencedNodeId} in input ${inputKey}`);
+              
+              // Try to find a suitable replacement or use a default approach
+              if (node.class_type === "CLIPTextEncode") {
+                // For CLIPTextEncode nodes, ensure the CLIP model is available
+                const clipNodes = nodes.filter(id => 
+                  fixedWorkflow[id].class_type === "DualCLIPLoader" || 
+                  fixedWorkflow[id].class_type === "CLIPLoader"
+                );
+                
+                if (clipNodes.length > 0) {
+                  console.log(`Fixing reference: replacing ${referencedNodeId} with ${clipNodes[0]}`);
+                  node.inputs[inputKey] = [clipNodes[0], input[1] || 0];
+                } else {
+                  // If we can't find a suitable replacement, remove the reference
+                  delete node.inputs[inputKey];
+                }
+              } else {
+                // For other node types, handle case by case or remove the reference
+                console.log(`Removing invalid reference from node ${nodeId}, input ${inputKey}`);
+                delete node.inputs[inputKey];
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    return fixedWorkflow;
+  },
   
   /**
    * Create a standard Flux workflow with optional image inputs
    */
-  createFluxWorkflow({ prompt, steps = 20, filenamePrefix = 'Otherides-2d' }) {
+  createSimpleFluxWorkflow({ prompt, steps = 20, filenamePrefix = 'Otherides-2d' }) {
     console.log("Creating standard Flux workflow with params:", { prompt, steps, filenamePrefix });
     
     // Add timestamp to make the generation unique
@@ -125,7 +275,7 @@ const ComfyService = {
     filenamePrefix = 'Otherides-2d_' 
   }) {
     console.log("Creating advanced Flux workflow with params:", { 
-      prompt, steps, reduxStrength, useDepth, filenamePrefix 
+    prompt, steps, reduxStrength, useDepth, filenamePrefix 
     });
     
     // Add timestamp to make the generation unique

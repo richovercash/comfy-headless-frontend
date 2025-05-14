@@ -7,6 +7,9 @@ import { supabase } from "../services/supabaseService";
 import ComfyUITroubleshooter from './ComfyUITroubleshooter';
 import Base64Service from '../services/base64Service';
 
+import loraService from '../services/loraService';
+import LoraSelector from './LoraSelector';
+
 
 export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
 
@@ -29,6 +32,9 @@ const FluxGenerationForm = () => {
   const [pollingAttempts, setPollingAttempts] = useState(0);
   const [sessionId, setSessionId] = useState(null);
   const [useAdvancedWorkflow, setUseAdvancedWorkflow] = useState(false);
+  const [selectedLoras, setSelectedLoras] = useState([]);
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  
 
   const handleChange = (key, value) => {
     setValues(prev => ({...prev, [key]: value}));
@@ -144,13 +150,15 @@ const FluxGenerationForm = () => {
           steps: values.steps,
           reduxStrength: values.reduxStrength,
           useDepth: values.useDepth,
-          filenamePrefix: values.filenamePrefix
+          filenamePrefix: values.filenamePrefix,
+          loras: selectedLoras // This is the new line to add
         });
       } else {
         workflowResult = ComfyService.createFluxWorkflow({
           prompt: values.prompt,
           steps: values.steps,
-          filenamePrefix: values.filenamePrefix
+          filenamePrefix: values.filenamePrefix,
+          loras: selectedLoras // This is the new line to add
         });
       }
       
@@ -417,7 +425,19 @@ const FluxGenerationForm = () => {
               useDepth: values.useDepth,
               workflowType: useAdvancedWorkflow ? 'advanced' : 'simple',
               filename: filename
-            }
+            },
+            lora_settings: selectedLoras.length > 0 ? {
+            count: selectedLoras.length,
+            names: selectedLoras.map(l => l.name || 'Unnamed LoRA'),
+            settings: selectedLoras.map(l => ({
+              name: l.name,
+              strength: l.strength,
+              model_strength: l.model_strength,
+              clip_strength: l.clip_strength,
+              activation_words: l.activation_words,
+              order: l.lora_order
+            }))
+          } : null
           }
         ])
         .select();
@@ -439,6 +459,15 @@ const FluxGenerationForm = () => {
               asset_id: assetData[0].id
             }
           ]);
+        // Save LoRA associations if any were used
+        if (selectedLoras.length > 0 && assetData[0].id) {
+          try {
+            console.log("Saving LoRA associations for asset");
+            await loraService.saveAssetLoras(assetData[0].id, selectedLoras);
+          } catch (loraError) {
+            console.error("Failed to save LoRA associations:", loraError);
+          }
+        }
           
         if (sessionLinkError) {
           console.error("Failed to link asset to session:", sessionLinkError);
@@ -589,6 +618,10 @@ const FluxGenerationForm = () => {
     return `${bucket}/${filename}`;
   };
 
+  const handleLorasChange = (loras) => {
+    setSelectedLoras(loras);
+  };
+
   return (
     <FormContainer>
       <h2>Generate with Flux Workflow</h2>
@@ -725,7 +758,24 @@ const FluxGenerationForm = () => {
             </FormGroup>
           </>
         )}
+
         
+        <ToggleContainer>
+          <ToggleButton 
+            type="button"
+            onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+          >
+            {showAdvancedOptions ? 'Hide Advanced Options' : 'Show Advanced Options'}
+          </ToggleButton>
+        </ToggleContainer>
+
+        {showAdvancedOptions && (
+          <AdvancedOptions>
+            <h3>Advanced Options</h3>
+            <LoraSelector onLorasChange={handleLorasChange} disabled={isGenerating} />
+          </AdvancedOptions>
+        )}
+
         <FormGroup>
           <Label>Filename Prefix</Label>
           <Input
@@ -734,6 +784,7 @@ const FluxGenerationForm = () => {
             onChange={(e) => handleChange('filenamePrefix', e.target.value)}
           />
         </FormGroup>
+
         
         <Button type="submit" disabled={isGenerating}>
           {isGenerating ? 'Generating...' : 'Generate Image'}
@@ -1025,6 +1076,39 @@ const FormCheck = styled.div`
   
   label {
     font-size: 0.9rem;
+  }
+`;
+const ToggleContainer = styled.div`
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+`;
+
+const ToggleButton = styled.button`
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  
+  &:hover {
+    background-color: #5a6268;
+  }
+`;
+
+const AdvancedOptions = styled.div`
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background-color: #f9f9f9;
+  
+  h3 {
+    margin-top: 0;
+    margin-bottom: 16px;
+    color: #333;
   }
 `;
 

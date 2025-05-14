@@ -1,0 +1,138 @@
+// server/routes/lora.js
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const router = express.Router();
+
+// The path to ComfyUI's LoRA directory
+const LORA_BASE_PATH = process.env.COMFYUI_LORA_PATH || path.join(process.env.COMFYUI_PATH || '', 'models', 'loras', 'flux');
+
+/**
+ * Recursively scan directories for LoRA files
+ * @param {string} dir - Directory to scan
+ * @param {string} relativePath - Relative path for file_path construction
+ * @returns {Array} Array of LoRA objects
+ */
+function scanDirectory(dir, relativePath = '') {
+  const loras = [];
+  
+  try {
+    const files = fs.readdirSync(dir);
+    
+    for (const file of files) {
+      const fullPath = path.join(dir, file);
+      const stats = fs.statSync(fullPath);
+      
+      if (stats.isDirectory()) {
+        // Recursively scan subdirectories
+        const subLoras = scanDirectory(
+          fullPath, 
+          relativePath ? path.join(relativePath, file) : file
+        );
+        loras.push(...subLoras);
+      } else if (file.endsWith('.safetensors')) {
+        // This is a LoRA file
+        const name = path.basename(file, '.safetensors');
+        const filePath = relativePath ? path.join(relativePath, file) : file;
+        
+        loras.push({
+          name,
+          display_name: formatDisplayName(name),
+          file_path: filePath,
+          category: relativePath || 'Default'
+        });
+      }
+    }
+  } catch (error) {
+    console.error(`Error scanning directory ${dir}:`, error);
+  }
+  
+  return loras;
+}
+
+/**
+ * Format a filename into a more readable display name
+ * @param {string} filename - Raw filename
+ * @returns {string} Formatted display name
+ */
+function formatDisplayName(filename) {
+  return filename
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/**
+ * Route to scan ComfyUI's LoRA directories
+ */
+router.get('/scan-lora-directories', (req, res) => {
+  try {
+    console.log('Scanning LoRA directories at:', LORA_BASE_PATH);
+    
+    if (!fs.existsSync(LORA_BASE_PATH)) {
+      return res.status(404).json({ 
+        error: 'LoRA directory not found', 
+        path: LORA_BASE_PATH 
+      });
+    }
+    
+    const loras = scanDirectory(LORA_BASE_PATH);
+    
+    return res.json({
+      loras,
+      count: loras.length,
+      base_path: LORA_BASE_PATH
+    });
+  } catch (error) {
+    console.error('Error scanning LoRA directories:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Route to get a list of LoRAs from ComfyUI's API
+ * This is an alternative approach that uses ComfyUI's API directly
+ */
+router.get('/get-loras-from-comfyui', async (req, res) => {
+  try {
+    const comfyApiUrl = process.env.COMFYUI_API_URL || 'http://localhost:8188/api';
+    
+    // Call ComfyUI's API to get model list
+    const response = await fetch(`${comfyApiUrl}/object_info`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch data from ComfyUI API: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // Extract LoRA information from the API response
+    const loras = [];
+    
+    if (data?.LoraLoader?.input?.required?.lora_name?.options) {
+      const loraOptions = data.LoraLoader.input.required.lora_name.options;
+      
+      for (const [filePath, displayName] of Object.entries(loraOptions)) {
+        if (filePath === 'None') continue;
+        
+        const name = path.basename(filePath, path.extname(filePath));
+        const folderPath = path.dirname(filePath) !== '.' ? path.dirname(filePath) : '';
+        
+        loras.push({
+          name,
+          display_name: displayName,
+          file_path: filePath,
+          category: folderPath || 'Default'
+        });
+      }
+    }
+    
+    return res.json({
+      loras,
+      count: loras.length
+    });
+  } catch (error) {
+    console.error('Error getting LoRAs from ComfyUI API:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+module.exports = router;
