@@ -1,37 +1,49 @@
-// src/components/LoraSelector.jsx (Simplified version)
+// src/components/LoraSelector.jsx
 import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import loraService from '../services/loraService';
 
-const LoraSelector = ({ 
-  onLorasChange, 
-  initialLoras = [], 
-  maxLoras = 10,
-  disabled = false 
+/**
+ * Component for selecting and configuring LoRAs
+ */
+const LoraSelector = ({
+  onLorasChange,
+  initialLoras = [],
+  maxLoras = 5,
+  disabled = false
 }) => {
   const [availableLoras, setAvailableLoras] = useState([]);
-  const [selectedLoras, setSelectedLoras] = useState(initialLoras.length > 0 ? initialLoras : []);
+  const [selectedLoras, setSelectedLoras] = useState(initialLoras);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [fetchAttempts, setFetchAttempts] = useState(0);
 
   // Fetch available LoRAs on component mount
   useEffect(() => {
     const fetchLoras = async () => {
       try {
         setIsLoading(true);
+        console.log('Fetching available LoRAs...');
         const loras = await loraService.getAllLoras();
+        console.log(`Retrieved ${loras.length} LoRAs`, loras);
         setAvailableLoras(loras);
         setError(null);
       } catch (err) {
         console.error('Error fetching LoRAs:', err);
         setError('Failed to fetch available LoRAs. Please try again later.');
+        
+        // Retry logic - only retry a few times to avoid infinite loops
+        if (fetchAttempts < 3) {
+          setFetchAttempts(prevAttempts => prevAttempts + 1);
+          setTimeout(fetchLoras, 2000); // Retry after 2 seconds
+        }
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchLoras();
-  }, []);
+  }, [fetchAttempts]);
 
   // Update parent component when selected LoRAs change
   useEffect(() => {
@@ -55,6 +67,7 @@ const LoraSelector = ({
         name: '',
         file_path: 'None',
         model_strength: 1.0,
+        clip_strength: 1.0,
         activation_words: '',
         lora_order: selectedLoras.length + 1
       }
@@ -138,12 +151,48 @@ const LoraSelector = ({
     setSelectedLoras(reordered);
   };
 
-  if (isLoading) {
-    return <div>Loading LoRAs...</div>;
+  // Manually retry fetching LoRAs
+  const handleRetryFetch = async () => {
+    setFetchAttempts(0); // Reset attempts
+    setIsLoading(true);
+    try {
+      const loras = await loraService.getAllLoras();
+      setAvailableLoras(loras);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to fetch LoRAs: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Render loading state
+  if (isLoading && availableLoras.length === 0) {
+    return (
+      <LoraContainer>
+        <LoraHeader>
+          <h3>LoRA Settings</h3>
+        </LoraHeader>
+        <LoadingMessage>Loading available LoRAs...</LoadingMessage>
+      </LoraContainer>
+    );
   }
 
-  if (error) {
-    return <ErrorMessage>{error}</ErrorMessage>;
+  // Render error state
+  if (error && availableLoras.length === 0) {
+    return (
+      <LoraContainer>
+        <LoraHeader>
+          <h3>LoRA Settings</h3>
+        </LoraHeader>
+        <ErrorMessage>
+          {error}
+          <RetryButton onClick={handleRetryFetch} disabled={isLoading}>
+            {isLoading ? 'Retrying...' : 'Retry'}
+          </RetryButton>
+        </ErrorMessage>
+      </LoraContainer>
+    );
   }
 
   return (
@@ -151,15 +200,22 @@ const LoraSelector = ({
       <LoraHeader>
         <h3>LoRA Settings</h3>
         <AddButton 
-          type="button" // Add this type attribute
-          
-            
-          onClick={handleAddLora} 
-          disabled={disabled || selectedLoras.length >= maxLoras}
+          type="button"
+          onClick={handleAddLora}
+          disabled={disabled || selectedLoras.length >= maxLoras } /*|| availableLoras.length === 0 */
         >
           Add LoRA
         </AddButton>
       </LoraHeader>
+
+      {/* Show a message about LoRA count */}
+      <LoraInfo>
+        {availableLoras.length > 0 ? (
+          <p>{availableLoras.length} LoRAs available. Adding LoRAs can significantly influence the generation results.</p>
+        ) : (
+          <p>No LoRAs found in the system. Contact an administrator to add LoRAs.</p>
+        )}
+      </LoraInfo>
       
       {selectedLoras.length === 0 ? (
         <EmptyMessage>No LoRAs selected. Click "Add LoRA" to begin.</EmptyMessage>
@@ -167,32 +223,35 @@ const LoraSelector = ({
         <LoraList>
           {selectedLoras.map((lora, index) => (
             <LoraItem key={index}>
-              <LoraHeader>
+              <LoraItemHeader>
                 <LoraNumber>#{index + 1}</LoraNumber>
                 <ButtonGroup>
                   <MoveButton 
-                    type="button" // Add this type attribute
-                    onClick={() => handleMoveUp(index)} 
+                    type="button"
+                    onClick={() => handleMoveUp(index)}
                     disabled={disabled || index === 0}
+                    title="Move up"
                   >
                     ↑
                   </MoveButton>
                   <MoveButton 
-                    type="button" // Add this type attribute
-                    onClick={() => handleMoveDown(index)} 
+                    type="button"
+                    onClick={() => handleMoveDown(index)}
                     disabled={disabled || index === selectedLoras.length - 1}
+                    title="Move down"
                   >
                     ↓
                   </MoveButton>
                   <RemoveButton 
-                    type="button" // Add this type attribute
+                    type="button"
                     onClick={() => handleRemoveLora(index)}
                     disabled={disabled}
+                    title="Remove"
                   >
                     ×
                   </RemoveButton>
                 </ButtonGroup>
-              </LoraHeader>
+              </LoraItemHeader>
               
               <LoraForm>
                 <FormGroup>
@@ -212,7 +271,7 @@ const LoraSelector = ({
                 </FormGroup>
                 
                 <SliderGroup>
-                  <Label>Model Strength: {lora.model_strength.toFixed(2)}</Label>
+                  <Label>Model Strength: {parseFloat(lora.model_strength).toFixed(2)}</Label>
                   <Slider
                     type="range"
                     min="0"
@@ -220,6 +279,19 @@ const LoraSelector = ({
                     step="0.05"
                     value={lora.model_strength}
                     onChange={(e) => handleLoraChange(index, 'model_strength', parseFloat(e.target.value))}
+                    disabled={disabled}
+                  />
+                </SliderGroup>
+                
+                <SliderGroup>
+                  <Label>CLIP Strength: {parseFloat(lora.clip_strength).toFixed(2)}</Label>
+                  <Slider
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="0.05"
+                    value={lora.clip_strength}
+                    onChange={(e) => handleLoraChange(index, 'clip_strength', parseFloat(e.target.value))}
                     disabled={disabled}
                   />
                 </SliderGroup>
@@ -291,11 +363,59 @@ const AddButton = styled.button`
   }
 `;
 
+const LoraInfo = styled.div`
+  margin-bottom: 16px;
+  padding: 10px;
+  background-color: #e9f7fd;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  
+  p {
+    margin: 0;
+    color: #0c5460;
+  }
+`;
+
 const EmptyMessage = styled.div`
   color: #6c757d;
   font-style: italic;
   text-align: center;
   padding: 20px;
+`;
+
+const LoadingMessage = styled.div`
+  color: #6c757d;
+  text-align: center;
+  padding: 20px;
+`;
+
+const ErrorMessage = styled.div`
+  color: #721c24;
+  background-color: #f8d7da;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+`;
+
+const RetryButton = styled.button`
+  background-color: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin-left: 10px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  
+  &:hover {
+    background-color: #c82333;
+  }
+  
+  &:disabled {
+    background-color: #6c757d;
+    cursor: not-allowed;
+  }
 `;
 
 const LoraList = styled.div`
@@ -311,11 +431,11 @@ const LoraItem = styled.div`
   padding: 16px;
 `;
 
-const LoraForm = styled.div`
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 12px;
-  margin-top: 12px;
+const LoraItemHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
 `;
 
 const LoraNumber = styled.div`
@@ -373,6 +493,12 @@ const RemoveButton = styled.button`
   }
 `;
 
+const LoraForm = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
+`;
+
 const FormGroup = styled.div`
   display: flex;
   flex-direction: column;
@@ -424,15 +550,6 @@ const PreviewText = styled.div`
   border: 1px solid #ddd;
   border-radius: 4px;
   min-height: 20px;
-`;
-
-const ErrorMessage = styled.div`
-  color: #dc3545;
-  padding: 12px;
-  background-color: #f8d7da;
-  border: 1px solid #f5c6cb;
-  border-radius: 4px;
-  margin-bottom: 16px;
 `;
 
 export default LoraSelector;
