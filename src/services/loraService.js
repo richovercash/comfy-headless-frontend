@@ -384,29 +384,6 @@ class LoraService {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   
   /**
    * Test LoRA connectivity with ComfyUI
@@ -614,148 +591,15 @@ class LoraService {
     }
   }
 
-  async getAvailableLorasFromComfyUI() {
-  try {
-    console.log("Getting available LoRAs from ComfyUI");
-    
-    const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
-    const response = await fetch(`${API_BASE_URL}/object_info`);
-    
-    if (!response.ok) {
-      throw new Error(`Failed to fetch data from ComfyUI API: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    const loras = [];
-    
-    // Check LoraLoader first (most standard)
-    if (data.LoraLoader?.input?.required?.lora_name?.options) {
-      console.log("Found LoraLoader");
-      const loraOptions = data.LoraLoader.input.required.lora_name.options;
-      
-      Object.entries(loraOptions).forEach(([filePath, displayName]) => {
-        if (filePath === 'None') return;
-        
-        // Extract name from the file path
-        const name = filePath.split('/').pop().replace(/\.\w+$/, '');
-        const folder = filePath.includes('/') ? filePath.split('/')[0] : 'Default';
-        
-        loras.push({
-          name,
-          file_path: filePath,
-          display_name: displayName,
-          category: folder
-        });
-      });
-    }
-    
-    // Check FluxBlockLoraLoader if no LoRAs found yet
-    if (loras.length === 0 && data.FluxBlockLoraLoader) {
-      console.log("Checking FluxBlockLoraLoader");
-      
-      // Inspect the structure to see how LoRAs are defined
-      console.log("FluxBlockLoraLoader structure:", data.FluxBlockLoraLoader.input);
-      
-      if (data.FluxBlockLoraLoader.input?.required?.lora_name?.[1]) {
-        console.log("Found LoRA options in FluxBlockLoraLoader");
-        
-        // Try to parse the structure
-        const loraOptions = data.FluxBlockLoraLoader.input.required.lora_name[1];
-        
-        // This could be an array of options
-        if (Array.isArray(loraOptions)) {
-          loraOptions.forEach(option => {
-            if (option && option !== "None") {
-              const name = typeof option === 'string' ? 
-                          option.split('/').pop().replace(/\.\w+$/, '') : 'Unknown';
-              
-              loras.push({
-                name,
-                file_path: option,
-                display_name: name,
-                category: 'Flux'
-              });
-            }
-          });
-        }
-      }
-    }
-    
-    // Check 'easy loraStack' (with space) if no LoRAs found yet
-    if (loras.length === 0 && data['easy loraStack']) {
-      console.log("Checking 'easy loraStack'");
-      console.log("'easy loraStack' structure:", data['easy loraStack'].input);
-      
-      // Look at the optional fields to find LoRA names
-      const optional = data['easy loraStack'].input?.optional;
-      
-      if (optional) {
-        for (let i = 1; i <= 10; i++) {
-          const fieldName = `lora_${i}_name`;
-          
-          if (optional[fieldName]) {
-            console.log(`Found ${fieldName}:`, optional[fieldName]);
-            
-            // Check if it's an array with options in the second element
-            if (Array.isArray(optional[fieldName]) && optional[fieldName].length > 1) {
-              const options = optional[fieldName][1];
-              
-              if (Array.isArray(options)) {
-                options.forEach(option => {
-                  if (option && option !== "None") {
-                    const name = option.split('/').pop().replace(/\.\w+$/, '');
-                    
-                    // Avoid duplicates
-                    if (!loras.some(l => l.file_path === option)) {
-                      loras.push({
-                        name,
-                        file_path: option,
-                        display_name: name,
-                        category: option.includes('/') ? option.split('/')[0] : 'Default'
-                      });
-                    }
-                  }
-                });
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    // Last resort: Add hardcoded LoRAs if we know the paths
-    if (loras.length === 0) {
-      console.log("No LoRAs found via API, using hardcoded values");
-      
-      // Add the LoRAs you mentioned earlier
-      const knownPaths = [
-        "Flux/mjV6.safetensors", 
-        "Flux/moody-fog.safetensors", 
-        "Flux/neon-mist03-000015.safetensors"
-      ];
-      
-      knownPaths.forEach(path => {
-        const name = path.split('/').pop().replace(/\.\w+$/, '');
-        
-        loras.push({
-          name,
-          file_path: path,
-          display_name: name,
-          category: path.includes('/') ? path.split('/')[0] : 'Default'
-        });
-      });
-    }
-    
-    console.log(`Found ${loras.length} LoRAs:`, loras);
-    return loras;
-  } catch (error) {
-    console.error("Error getting available LoRAs from ComfyUI:", error);
-    throw error;
-  }
-  }
+  
+  
 
 
-    /**
+
+
+  // src/services/loraService.js - Improved EasyLoraStack integration
+
+  /**
    * Update workflow with EasyLoraStack for handling multiple LoRAs
    * @param {Object} workflow - ComfyUI workflow JSON
    * @param {Array} loras - Array of LoRA objects with settings
@@ -805,21 +649,20 @@ class LoraService {
         }
       }
     }
-  
-  console.log(`Found ${modelConsumers.length} nodes connected to model`);
-  
-    // Create the EasyLoraStack node with a high ID to avoid conflicts
-    const loraStackNodeId = "900";
+
+    console.log(`Found ${modelConsumers.length} nodes connected to model`);
+
+    // Create the EasyLoraStack node (using ID 91 to match the reference workflow)
+    const loraStackNodeId = "91";
     
     // Create the base LoraStack node
     updatedWorkflow[loraStackNodeId] = {
-      "class_type": "easy_loraStack",
       "inputs": {
         "toggle": true,
-        "mode": "sequential",
-        "num_loras": Math.min(loras.length, 10),
-        // We'll add individual LoRA inputs below
+        "mode": "simple",
+        "num_loras": Math.min(loras.length, 10)
       },
+      "class_type": "easy loraStack",
       "_meta": {
         "title": "EasyLoraStack"
       }
@@ -832,36 +675,238 @@ class LoraService {
       const loraIndex = index + 1;
       
       // Add this LoRA to the stack
-      updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_name`] = lora.file_path;
-      updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_strength`] = 1.0;
+      updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_name`] = lora.file_path || "None";
+      updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_strength`] = parseFloat(lora.strength || 1.0);
       updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_model_strength`] = parseFloat(lora.model_strength || 1.0);
       updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_clip_strength`] = parseFloat(lora.clip_strength || 1.0);
     });
     
-    // Create a LoraStack loader node to apply the stack to the model
-    const loraLoaderNodeId = "901";
-    updatedWorkflow[loraLoaderNodeId] = {
-      "class_type": "apply_loraStack",
+    // Fill in remaining LoRA slots with "None"
+    for (let i = lorasToAdd.length + 1; i <= 10; i++) {
+      updatedWorkflow[loraStackNodeId].inputs[`lora_${i}_name`] = "None";
+      updatedWorkflow[loraStackNodeId].inputs[`lora_${i}_strength`] = 1.0;
+      updatedWorkflow[loraStackNodeId].inputs[`lora_${i}_model_strength`] = 1.0;
+      updatedWorkflow[loraStackNodeId].inputs[`lora_${i}_clip_strength`] = 1.0;
+    }
+    
+    // Create a CR Apply LoRA Stack node (using ID 110 to match the reference workflow)
+    const crApplyNodeId = "110";
+    updatedWorkflow[crApplyNodeId] = {
       "inputs": {
         "model": [modelNodeId, 0],
-        "clip": clipNodeId ? [clipNodeId, 0] : null,
+        "clip": [clipNodeId, 0],
         "lora_stack": [loraStackNodeId, 0]
       },
+      "class_type": "CR Apply LoRA Stack",
       "_meta": {
-        "title": "Apply LoRA Stack"
+        "title": "💊 CR Apply LoRA Stack"
       }
     };
     
-    // Replace model connections with the LoRA-enhanced model
-    modelConsumers.forEach(consumer => {
-      // Only update if the consumer node still exists and isn't one of our LoRA nodes
-      if (updatedWorkflow[consumer.nodeId] && parseInt(consumer.nodeId) < 900) {
-        updatedWorkflow[consumer.nodeId].inputs[consumer.inputName] = [loraLoaderNodeId, 0];
+    // Update model connections to use the CR Apply LoRA Stack output
+    for (const consumer of modelConsumers) {
+      if (updatedWorkflow[consumer.nodeId]) {
+        // Update to use the model output from CR Apply LoRA Stack
+        updatedWorkflow[consumer.nodeId].inputs[consumer.inputName] = [crApplyNodeId, 0];
       }
-    });
+    }
+    
+    // Update CLIP connections to use the CR Apply LoRA Stack CLIP output
+    if (clipNodeId) {
+      for (const [nodeId, node] of Object.entries(updatedWorkflow)) {
+        if (node?.inputs) {
+          for (const [inputName, input] of Object.entries(node.inputs)) {
+            if (Array.isArray(input) && input[0] === clipNodeId && nodeId !== crApplyNodeId) {
+              // Update to use the CLIP output from CR Apply LoRA Stack
+              updatedWorkflow[nodeId].inputs[inputName] = [crApplyNodeId, 1];
+            }
+          }
+        }
+      }
+    }
     
     return updatedWorkflow;
   }
+
+
+
+
+
+
+
+  async getAvailableLorasFromComfyUI() {
+    try {
+      console.log("Getting available LoRAs from ComfyUI");
+      
+      const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
+      const response = await fetch(`${API_BASE_URL}/object_info`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch data from ComfyUI API: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      const loras = [];
+      
+      // Check for 'easy loraStack' as it contains all the LoRAs
+      if (data['easy loraStack']) {
+        console.log("Found 'easy loraStack', extracting LoRAs");
+        
+        // In the easy loraStack node, LoRAs are stored in the lora_X_name optional fields
+        const optional = data['easy loraStack'].input?.optional;
+        
+        if (optional) {
+          for (let i = 1; i <= 10; i++) {
+            const fieldName = `lora_${i}_name`;
+            
+            if (optional[fieldName] && Array.isArray(optional[fieldName])) {
+              console.log(`Processing ${fieldName}`);
+              
+              // The actual array of LoRA options is in position 1 of the array, not 0
+              // This is based on your console output showing "[0]" contains the array length
+              if (optional[fieldName].length > 1 && Array.isArray(optional[fieldName][1])) {
+                const loraOptions = optional[fieldName][1];
+                
+                loraOptions.forEach(option => {
+                  if (option && option !== "None") {
+                    // Avoid duplicates
+                    if (!loras.some(l => l.file_path === option)) {
+                      const name = option.split('/').pop().replace(/\.\w+$/, '');
+                      const category = option.includes('/') ? option.split('/')[0] : 'Default';
+                      
+                      loras.push({
+                        name,
+                        file_path: option,
+                        display_name: name,
+                        category
+                      });
+                    }
+                  }
+                });
+              }
+            }
+          }
+        }
+      }
+      
+      // Check FluxBlockLoraLoader if no LoRAs found yet
+      if (loras.length === 0 && data.FluxBlockLoraLoader) {
+        console.log("Checking FluxBlockLoraLoader");
+        
+        // Inspect the structure to see how LoRAs are defined
+        console.log("FluxBlockLoraLoader structure:", data.FluxBlockLoraLoader.input);
+        
+        if (data.FluxBlockLoraLoader.input?.required?.lora_name?.[1]) {
+          console.log("Found LoRA options in FluxBlockLoraLoader");
+          
+          // Try to parse the structure
+          const loraOptions = data.FluxBlockLoraLoader.input.required.lora_name[1];
+          
+          // This could be an array of options
+          if (Array.isArray(loraOptions)) {
+            loraOptions.forEach(option => {
+              if (option && option !== "None") {
+                const name = typeof option === 'string' ? 
+                            option.split('/').pop().replace(/\.\w+$/, '') : 'Unknown';
+                
+                // Avoid duplicates
+                if (!loras.some(l => l.file_path === option)) {
+                  loras.push({
+                    name,
+                    file_path: option,
+                    display_name: name,
+                    category: 'Flux'
+                  });
+                }
+              }
+            });
+          }
+        }
+      }
+      
+      // Check LoraLoader as a fallback
+      if (loras.length === 0 && data.LoraLoader?.input?.required?.lora_name?.options) {
+        console.log("Found LoraLoader");
+        const loraOptions = data.LoraLoader.input.required.lora_name.options;
+        
+        Object.entries(loraOptions).forEach(([filePath, displayName]) => {
+          if (filePath === 'None') return;
+          
+          // Extract name from the file path
+          const name = filePath.split('/').pop().replace(/\.\w+$/, '');
+          const folder = filePath.includes('/') ? filePath.split('/')[0] : 'Default';
+          
+          // Avoid duplicates
+          if (!loras.some(l => l.file_path === filePath)) {
+            loras.push({
+              name,
+              file_path: filePath,
+              display_name: displayName,
+              category: folder
+            });
+          }
+        });
+      }
+      
+      // Check FluxLoraLoader if still no LoRAs found
+      if (loras.length === 0 && data.FluxLoraLoader?.input?.required?.lora_name?.options) {
+        console.log("Found FluxLoraLoader");
+        const loraOptions = data.FluxLoraLoader.input.required.lora_name.options;
+        
+        Object.entries(loraOptions).forEach(([filePath, displayName]) => {
+          if (filePath === 'None') return;
+          
+          // Extract name from the file path
+          const name = filePath.split('/').pop().replace(/\.\w+$/, '');
+          const folder = filePath.includes('/') ? filePath.split('/')[0] : 'Default';
+          
+          // Avoid duplicates
+          if (!loras.some(l => l.file_path === filePath)) {
+            loras.push({
+              name,
+              file_path: filePath,
+              display_name: displayName,
+              category: folder
+            });
+          }
+        });
+      }
+      
+      // If no LoRAs found through API methods, you might fall back to hardcoded values
+      // but only as a last resort
+      if (loras.length === 0) {
+        console.warn("No LoRAs found through API methods, using hardcoded values as fallback");
+        
+        // Add some known Flux LoRAs as fallback
+        const knownPaths = [
+          "Flux/mjV6.safetensors", 
+          "Flux/moody-fog.safetensors", 
+          "Flux/neon-mist03-000015.safetensors"
+        ];
+        
+        knownPaths.forEach(path => {
+          const name = path.split('/').pop().replace(/\.\w+$/, '');
+          
+          loras.push({
+            name,
+            file_path: path,
+            display_name: name,
+            category: path.includes('/') ? path.split('/')[0] : 'Default'
+          });
+        });
+      }
+      
+      console.log(`Found ${loras.length} LoRAs:`, loras);
+      return loras;
+    } catch (error) {
+      console.error("Error getting available LoRAs from ComfyUI:", error);
+      throw error;
+    }
+  }
+
+
+
+
 
   // Add this to loraService.js
   async testEasyLoraStackIntegration() {
@@ -1029,12 +1074,121 @@ class LoraService {
     }
   }
 
+    /**
+   * Debug EasyLoraStack integration
+   * @returns {Promise<Object>} Debug information about EasyLoraStack usage
+   */
+  async debugEasyLoraStack() {
+    try {
+      const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
+      
+      const debugInfo = {
+        success: false,
+        hasEasyLoraStack: false,
+        hasCRApplyLoraStack: false,
+        loraCount: 0,
+        loraOptions: [],
+        structure: null,
+        errors: []
+      };
+      
+      // Get the object_info to check for nodes
+      const response = await fetch(`${API_BASE_URL}/object_info`);
+      
+      if (!response.ok) {
+        debugInfo.errors.push(`Failed to fetch object_info: ${response.status}`);
+        return debugInfo;
+      }
+      
+      const data = await response.json();
+      
+      // Check for EasyLoraStack
+      if (data['easy loraStack']) {
+        debugInfo.hasEasyLoraStack = true;
+        debugInfo.structure = data['easy loraStack'];
+        
+        // Examine the structure
+        if (data['easy loraStack'].input?.optional) {
+          console.log("Found EasyLoraStack options structure:", data['easy loraStack'].input.optional);
+          
+          // Log the detailed structure of the first LoRA field to understand format
+          if (data['easy loraStack'].input.optional.lora_1_name) {
+            console.log("LoRA field structure example:", 
+              JSON.stringify(data['easy loraStack'].input.optional.lora_1_name));
+            
+            // Extract available LoRAs from the structure
+            if (Array.isArray(data['easy loraStack'].input.optional.lora_1_name) && 
+                data['easy loraStack'].input.optional.lora_1_name.length > 1) {
+              
+              const loraArray = data['easy loraStack'].input.optional.lora_1_name[1];
+              if (Array.isArray(loraArray)) {
+                debugInfo.loraCount = loraArray.length;
+                debugInfo.loraOptions = loraArray.filter(name => name !== 'None');
+                console.log(`Found ${debugInfo.loraOptions.length} LoRAs in EasyLoraStack`);
+                
+                // Check if the array contains Flux LoRAs specifically
+                const fluxLoras = debugInfo.loraOptions.filter(name => 
+                  name && name.includes('Flux/'));
+                
+                console.log(`Found ${fluxLoras.length} Flux LoRAs:`, fluxLoras);
+                debugInfo.fluxLoras = fluxLoras;
+              } else {
+                debugInfo.errors.push("LoRA options not found in expected format");
+              }
+            }
+          }
+        }
+      } else {
+        debugInfo.errors.push("EasyLoraStack node not found");
+      }
+      
+      // Check for CR Apply LoRA Stack
+      if (data['CR Apply LoRA Stack']) {
+        debugInfo.hasCRApplyLoraStack = true;
+      } else {
+        debugInfo.errors.push("CR Apply LoRA Stack node not found");
+      }
+      
+      // If we have both required nodes, mark as success
+      if (debugInfo.hasEasyLoraStack && debugInfo.hasCRApplyLoraStack) {
+        debugInfo.success = true;
+      }
+      
+      // Additional info - check for LoRAs in other nodes too
+      const extraDebug = {};
+      
+      if (data.LoraLoader?.input?.required?.lora_name?.options) {
+        extraDebug.loraLoaderCount = Object.keys(data.LoraLoader.input.required.lora_name.options).length;
+      }
+      
+      if (data.FluxLoraLoader?.input?.required?.lora_name?.options) {
+        extraDebug.fluxLoraLoaderCount = Object.keys(data.FluxLoraLoader.input.required.lora_name.options).length;
+        extraDebug.fluxLoraLoaderNames = Object.keys(data.FluxLoraLoader.input.required.lora_name.options);
+      }
+      
+      debugInfo.extraDebug = extraDebug;
+      
+      // Check loaded models to see if they might contain the necessary extensions
+      if (data.CheckpointLoaderSimple?.input?.required?.ckpt_name?.options) {
+        const models = Object.keys(data.CheckpointLoaderSimple.input.required.ckpt_name.options);
+        debugInfo.availableModels = models;
+        console.log(`Found ${models.length} models`);
+      }
+      
+      return debugInfo;
+    } catch (error) {
+      console.error("Error debugging EasyLoraStack:", error);
+      return {
+        success: false,
+        errors: [`Error debugging EasyLoraStack: ${error.message}`]
+      };
+    }
+  }
 
 
 
 
-
-
+}
   
 
 
@@ -1051,6 +1205,6 @@ class LoraService {
 
 
 
-}
+
 
 export default new LoraService();

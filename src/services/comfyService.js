@@ -1,5 +1,3 @@
-// src/services/comfyService.js
-// src/services/comfyService.js - Updated for LoRA support
 import loraService from './loraService';
 
 // Base API URL for ComfyUI
@@ -43,12 +41,6 @@ const ComfyService = {
       };
     }
   },
-  
-
-
-
-
-
 
   /**
    * Queue a workflow prompt in ComfyUI
@@ -71,10 +63,6 @@ const ComfyService = {
     
     return await response.json();
   },
-
-
- 
-
 
   /**
    * Create a Flux workflow with LoRA support using EasyLoraStack
@@ -153,8 +141,7 @@ const ComfyService = {
       
       try {
         // Important: Use the new EasyLoraStack method
-        const workflowWithLoras = loraService.updateWorkflowWithEasyLoraStack(workflow, loras);
-        workflow = workflowWithLoras;
+        workflow = this._applyEasyLoraStackToWorkflow(workflow, loras);
       } catch (error) {
         console.error("Error applying LoRAs with EasyLoraStack:", error);
         // Continue with the original workflow if there was an error
@@ -172,6 +159,130 @@ const ComfyService = {
     };
   },
 
+  /**
+   * Apply EasyLoraStack to workflow
+   * Based on the flux_redux-lora_mode.json implementation
+   * @param {Object} workflow - Original workflow
+   * @param {Array} loras - LoRAs to apply
+   * @returns {Object} Updated workflow with EasyLoraStack
+   */
+  _applyEasyLoraStackToWorkflow(workflow, loras) {
+    // Clone the workflow to avoid modifying the original
+    const updatedWorkflow = JSON.parse(JSON.stringify(workflow));
+    
+    console.log(`Applying ${loras.length} LoRAs to workflow using EasyLoraStack`);
+    
+    // Find the UNETLoader node (modelNodeId) and DualCLIPLoader node (clipNodeId)
+    let modelNodeId = null;
+    let clipNodeId = null;
+    
+    // Find model and clip nodes
+    for (const [id, node] of Object.entries(updatedWorkflow)) {
+      if (node.class_type === "UNETLoader") {
+        modelNodeId = id;
+      } else if (node.class_type === "DualCLIPLoader" || node.class_type === "CLIPLoader") {
+        clipNodeId = id;
+      }
+    }
+    
+    if (!modelNodeId || !clipNodeId) {
+      console.error("Could not find required model and clip nodes");
+      return updatedWorkflow;
+    }
+    
+    console.log(`Found model node: ${modelNodeId}, clip node: ${clipNodeId}`);
+    
+    // Find all nodes that consume the model output
+    const modelConsumers = [];
+    
+    for (const [id, node] of Object.entries(updatedWorkflow)) {
+      if (node.inputs) {
+        for (const [inputName, inputValue] of Object.entries(node.inputs)) {
+          if (Array.isArray(inputValue) && inputValue[0] === modelNodeId) {
+            modelConsumers.push({
+              id,
+              inputName,
+              outputIndex: inputValue[1] || 0
+            });
+          }
+        }
+      }
+    }
+    
+    console.log(`Found ${modelConsumers.length} nodes consuming model output`);
+    
+    // Generate high node IDs to avoid conflicts
+    const loraStackNodeId = "91"; // EasyLoraStack node
+    const crApplyNodeId = "110"; // CR Apply LoRA Stack node
+    
+    // Create EasyLoraStack node similar to the example workflow
+    updatedWorkflow[loraStackNodeId] = {
+      "inputs": {
+        "toggle": true,
+        "mode": "simple",
+        "num_loras": Math.min(loras.length, 10) // Maximum 10 LoRAs supported
+      },
+      "class_type": "easy loraStack",
+      "_meta": {
+        "title": "EasyLoraStack"
+      }
+    };
+    
+    // Add each LoRA to the stack
+    loras.forEach((lora, index) => {
+      if (index < 10) { // Maximum 10 LoRAs in EasyLoraStack
+        const loraIndex = index + 1;
+        updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_name`] = lora.file_path || "None";
+        updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_strength`] = lora.strength || 1.0;
+        updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_model_strength`] = lora.model_strength || 1.0;
+        updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_clip_strength`] = lora.clip_strength || 1.0;
+      }
+    });
+    
+    // Fill in remaining LoRA slots with "None"
+    for (let i = loras.length + 1; i <= 10; i++) {
+      updatedWorkflow[loraStackNodeId].inputs[`lora_${i}_name`] = "None";
+      updatedWorkflow[loraStackNodeId].inputs[`lora_${i}_strength`] = 1.0;
+      updatedWorkflow[loraStackNodeId].inputs[`lora_${i}_model_strength`] = 1.0;
+      updatedWorkflow[loraStackNodeId].inputs[`lora_${i}_clip_strength`] = 1.0;
+    }
+    
+    // Create CR Apply LoRA Stack node
+    updatedWorkflow[crApplyNodeId] = {
+      "inputs": {
+        "model": [modelNodeId, 0],
+        "clip": [clipNodeId, 0],
+        "lora_stack": [loraStackNodeId, 0]
+      },
+      "class_type": "CR Apply LoRA Stack",
+      "_meta": {
+        "title": "💊 CR Apply LoRA Stack"
+      }
+    };
+    
+    // Redirect all model consumers to use the CR Apply LoRA Stack output instead
+    modelConsumers.forEach(consumer => {
+      // Only update if this isn't one of our newly added nodes
+      if (consumer.id !== loraStackNodeId && consumer.id !== crApplyNodeId) {
+        // Update the connection to use the CR Apply LoRA Stack output
+        updatedWorkflow[consumer.id].inputs[consumer.inputName] = [crApplyNodeId, 0];
+      }
+    });
+    
+    // For nodes that need the CLIP model, update them to use the CR Apply LoRA Stack CLIP output
+    for (const [id, node] of Object.entries(updatedWorkflow)) {
+      if (node.inputs) {
+        for (const [inputName, inputValue] of Object.entries(node.inputs)) {
+          if (Array.isArray(inputValue) && inputValue[0] === clipNodeId) {
+            // Update to use the CLIP output from CR Apply LoRA Stack node
+            updatedWorkflow[id].inputs[inputName] = [crApplyNodeId, 1];
+          }
+        }
+      }
+    }
+    
+    return updatedWorkflow;
+  },
 
   /**
    * Verifies that all node references in the workflow exist
