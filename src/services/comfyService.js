@@ -65,7 +65,7 @@ const ComfyService = {
   },
 
   /**
-   * Create a Flux workflow with LoRA support using EasyLoraStack
+   * Create a Flux workflow with LoRA support
    * @param {Object} options - Workflow configuration options
    * @returns {Object} Workflow object and timestamp
    */
@@ -90,7 +90,7 @@ const ComfyService = {
     // Generate timestamp for this workflow
     const timestamp = Date.now();
     
-    // Process activation words from LoRAs
+    // Process activation words from LoRAs if provided
     const activationWords = loraService.generateActivationWordsPrompt(loras);
     
     // Combine prompt with activation words if available
@@ -99,59 +99,50 @@ const ComfyService = {
       : prompt;
     
     console.log('Full prompt with activation words:', fullPrompt);
+    console.log("DEBUG PROMPT: Original prompt:", prompt);
+    console.log("DEBUG PROMPT: Activation words:", activationWords);
+    console.log("DEBUG PROMPT: Full prompt with activations:", fullPrompt);
     
-    // Get a workflow template based on depth conditioning options
-    let workflow;
+    // Create the basic workflow
+    let workflow = this._createBasicFluxWorkflow({
+      prompt: fullPrompt,
+      negativePrompt,
+      steps,
+      filenamePrefix,
+      timestamp
+    });
     
-    if (inputImageUrl && reduxImageUrl) {
-      // Advanced workflow...
-      workflow = this._createAdvancedWorkflow({
-        prompt: fullPrompt,
-        negativePrompt,
-        steps,
-        inputImageUrl,
-        reduxImageUrl,
-        filenamePrefix,
-        timestamp
-      });
-    } else if (inputImageUrl) {
-      // Basic workflow...
-      workflow = this._createBasicWorkflow({
-        prompt: fullPrompt,
-        negativePrompt,
-        steps,
-        inputImageUrl,
-        filenamePrefix,
-        timestamp
-      });
-    } else {
-      // Simple workflow...
-      workflow = this._createSimpleWorkflow({
-        prompt: fullPrompt,
-        negativePrompt,
-        steps,
-        filenamePrefix,
-        timestamp
-      });
-    }
-    
-    // Apply LoRA configuration if provided - USE THE NEW METHOD
+    // Apply LoRA configuration if provided
     if (loras && loras.length > 0) {
-      console.log(`Adding ${loras.length} LoRAs to workflow using EasyLoraStack`);
+      console.log(`Adding ${loras.length} LoRAs to workflow. LoRA data:`, loras);
       
       try {
-        // Important: Use the new EasyLoraStack method
-        workflow = this._applyEasyLoraStackToWorkflow(workflow, loras);
+        // Add LoRAs to the workflow
+        workflow = this._applyFluxLoras(workflow, loras);
       } catch (error) {
-        console.error("Error applying LoRAs with EasyLoraStack:", error);
+        console.error("Error applying LoRAs:", error);
         // Continue with the original workflow if there was an error
       }
     }
     
-    // Verify all node references exist in the workflow
+    // Final validation check
     workflow = this._verifyNodeReferences(workflow);
     
     console.log('Workflow created');
+    // In createFluxWorkflow in comfyService.js, add this before returning
+    console.log("DEBUG WORKFLOW: Final workflow with LoRAs:", workflow);
+    console.log("DEBUG WORKFLOW: Looking for LoRA nodes...");
+    const loraStackNode = Object.entries(workflow).find(([_, node]) => node.class_type === "easy loraStack")?.[1];
+    const crApplyNode = Object.entries(workflow).find(([_, node]) => node.class_type === "CR Apply LoRA Stack")?.[1];
+    console.log("DEBUG WORKFLOW: LoRA stack node:", loraStackNode);
+    console.log("DEBUG WORKFLOW: CR Apply node:", crApplyNode);
+    if (loraStackNode) {
+      console.log("DEBUG WORKFLOW: LoRA paths in stack:", 
+        Array.from({length: loraStackNode.inputs.num_loras}, (_, i) => i + 1)
+          .map(i => loraStackNode.inputs[`lora_${i}_name`])
+          .filter(path => path !== "None")
+      );
+}
     
     return {
       workflow,
@@ -160,17 +151,381 @@ const ComfyService = {
   },
 
   /**
+   * Apply LoRAs to workflow using FluxLoraLoader nodes
+   * @param {Object} workflow - Original workflow
+   * @param {Array} loras - LoRAs to apply
+   * @returns {Object} Updated workflow with LoRAs
+   */
+  _applyFluxLoras(workflow, loras) {
+    // Clone the workflow to avoid modifying the original
+    const updatedWorkflow = JSON.parse(JSON.stringify(workflow));
+    
+    if (!loras || loras.length === 0) {
+      return updatedWorkflow;
+    }
+    
+    console.log(`Adding ${loras.length} LoRAs to workflow using FluxLoraLoader nodes`);
+    
+    // Find the model node (UNETLoader) and CLIP node (DualCLIPLoader)
+    let modelNodeId = null;
+    let clipNodeId = null;
+    
+    for (const [id, node] of Object.entries(updatedWorkflow)) {
+      if (node.class_type === "UNETLoader") {
+        modelNodeId = id;
+      } else if (node.class_type === "DualCLIPLoader") {
+        clipNodeId = id;
+      }
+    }
+    
+    if (!modelNodeId || !clipNodeId) {
+      console.error(`Required nodes not found. Model node: ${modelNodeId}, CLIP node: ${clipNodeId}`);
+      return updatedWorkflow;
+    }
+    
+    console.log(`Found model node: ${modelNodeId}, clip node: ${clipNodeId}`);
+    
+    // Find all nodes that consume the model output
+    const modelConsumers = [];
+    
+    for (const [id, node] of Object.entries(updatedWorkflow)) {
+      if (node.inputs) {
+        for (const [inputName, inputValue] of Object.entries(node.inputs)) {
+          if (Array.isArray(inputValue) && inputValue[0] === modelNodeId) {
+            modelConsumers.push({
+              id,
+              inputName,
+              outputIndex: inputValue[1] || 0
+            });
+          }
+        }
+      }
+    }
+    
+    console.log(`Found ${modelConsumers.length} nodes consuming model output:`, modelConsumers);
+    
+    // Start with a high node ID to avoid conflicts
+    let nextNodeId = 100;
+    
+    // Create a chain of LoRA nodes
+    let previousNodeId = modelNodeId;
+    
+    loras.forEach((lora, index) => {
+      if (!lora.file_path || lora.file_path === "None") {
+        console.log(`Skipping invalid LoRA: ${lora.name || 'unnamed'}`);
+        return; // Skip invalid LoRAs
+      }
+      
+      const currentNodeId = nextNodeId.toString();
+      console.log(`Creating LoRA node ${currentNodeId} for ${lora.file_path}`);
+      
+      // Try using FluxLoraLoader first which is specifically made for Flux models
+      try {
+        updatedWorkflow[currentNodeId] = {
+          "class_type": "FluxLoraLoader",
+          "inputs": {
+            "model": [previousNodeId, 0],
+            "clip": [clipNodeId, 0],
+            "lora_name": lora.file_path,
+            "strength_model": parseFloat(lora.model_strength || 1.0),
+            "strength_clip": parseFloat(lora.clip_strength || 1.0)
+          },
+          "_meta": {
+            "title": `FluxLoraLoader: ${lora.name || lora.file_path}`
+          }
+        };
+      } catch (error) {
+        console.warn(`Error creating FluxLoraLoader, falling back to LoraLoader: ${error.message}`);
+        
+        // Fallback to standard LoraLoader if FluxLoraLoader is not available
+        updatedWorkflow[currentNodeId] = {
+          "class_type": "LoraLoader",
+          "inputs": {
+            "model": [previousNodeId, 0],
+            "clip": [clipNodeId, 0],
+            "lora_name": lora.file_path,
+            "strength_model": parseFloat(lora.model_strength || 1.0),
+            "strength_clip": parseFloat(lora.clip_strength || 1.0)
+          },
+          "_meta": {
+            "title": `LoraLoader: ${lora.name || lora.file_path}`
+          }
+        };
+      }
+      
+      // Update chain for next LoRA
+      previousNodeId = currentNodeId;
+      nextNodeId++;
+    });
+    
+    // If we've added any LoRAs, update the connections
+    if (previousNodeId !== modelNodeId) {
+      console.log(`Updating ${modelConsumers.length} connections to point to last LoRA node ${previousNodeId}`);
+      
+      // Update all nodes that were previously connected to the model
+      modelConsumers.forEach(consumer => {
+        if (updatedWorkflow[consumer.nodeId] && 
+            parseInt(consumer.nodeId) < 100) { // Don't update our own LoRA nodes
+          console.log(`Updating node ${consumer.nodeId}, input ${consumer.inputName} to use LoRA node ${previousNodeId}`);
+          updatedWorkflow[consumer.nodeId].inputs[consumer.inputName] = [previousNodeId, consumer.outputIndex];
+        }
+      });
+    }
+    
+    return updatedWorkflow;
+  },
+
+  /**
+   * Basic Flux workflow without image inputs - simplest working form
+   */
+  _createBasicFluxWorkflow({
+    prompt,
+    negativePrompt = 'low quality, bad anatomy, blurry, pixelated, distorted, deformed',
+    steps = 20,
+    filenamePrefix = 'Otherides-2d',
+    timestamp = Date.now()
+  }) {
+    return {
+      "1": {
+        "inputs": {
+          "unet_name": "blackforest/flux1-dev.sft",
+          "weight_dtype": "fp8_e4m3fn"
+        },
+        "class_type": "UNETLoader",
+        "_meta": {
+          "title": "Load Diffusion Model"
+        }
+      },
+      "2": {
+        "inputs": {
+          "clip_name1": "Flux/t5xxl_fp16.safetensors",
+          "clip_name2": "Flux/clip_l.safetensors",
+          "type": "flux",
+          "device": "default"
+        },
+        "class_type": "DualCLIPLoader",
+        "_meta": {
+          "title": "DualCLIPLoader"
+        }
+      },
+      "3": {
+        "inputs": {
+          "vae_name": "ae.sft"
+        },
+        "class_type": "VAELoader",
+        "_meta": {
+          "title": "Load VAE"
+        }
+      },
+      "4": {
+        "inputs": {
+          "text": prompt,
+          "clip": [
+            "2",
+            0
+          ]
+        },
+        "class_type": "CLIPTextEncode",
+        "_meta": {
+          "title": "CLIP Text Encode (Prompt)"
+        }
+      },
+      "5": {
+        "inputs": {
+          "text": negativePrompt,
+          "clip": [
+            "2",
+            0
+          ]
+        },
+        "class_type": "CLIPTextEncode",
+        "_meta": {
+          "title": "CLIP Text Encode (Negative Prompt)"
+        }
+      },
+      "6": {
+        "inputs": {
+          "width": 1024,
+          "height": 1024,
+          "batch_size": 1
+        },
+        "class_type": "EmptyLatentImage",
+        "_meta": {
+          "title": "Empty Latent Image"
+        }
+      },
+      "7": {
+        "inputs": {
+          "seed": Math.floor(Math.random() * 1000000),
+          "steps": steps,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "normal",
+          "denoise": 1.0,
+          "model": [
+            "1",
+            0
+          ],
+          "positive": [
+            "4",
+            0
+          ],
+          "negative": [
+            "5",
+            0
+          ],
+          "latent_image": [
+            "6",
+            0
+          ]
+        },
+        "class_type": "KSampler",
+        "_meta": {
+          "title": "KSampler"
+        }
+      },
+      "8": {
+        "inputs": {
+          "samples": [
+            "7",
+            0
+          ],
+          "vae": [
+            "3", 
+            0
+          ]
+        },
+        "class_type": "VAEDecode",
+        "_meta": {
+          "title": "VAE Decode"
+        }
+      },
+      "9": {
+        "inputs": {
+          "filename_prefix": `${filenamePrefix}_${timestamp}`,
+          "images": [
+            "8",
+            0
+          ]
+        },
+        "class_type": "SaveImage",
+        "_meta": {
+          "title": "Save Image"
+        }
+      }
+    };
+  },
+
+  /**
+   * Verifies that all node references in the workflow exist
+   * @param {Object} workflow - The workflow to verify
+   * @returns {Object} Validated workflow with fixes
+   */
+  _verifyNodeReferences(workflow) {
+    const nodes = Object.keys(workflow);
+    const fixedWorkflow = {...workflow};
+    
+    let modified = false;
+    
+    // Check each node's inputs
+    for (const nodeId in fixedWorkflow) {
+      const node = fixedWorkflow[nodeId];
+      
+      if (node.inputs) {
+        // For each input that references another node
+        for (const inputKey in node.inputs) {
+          const input = node.inputs[inputKey];
+          
+          if (Array.isArray(input) && input.length >= 1 && typeof input[0] === 'string') {
+            const referencedNodeId = input[0];
+            
+            // If the referenced node doesn't exist, log an error and fix it
+            if (!nodes.includes(referencedNodeId)) {
+              console.error(`Node ${nodeId} references non-existent node ${referencedNodeId} in input ${inputKey}`);
+              modified = true;
+              
+              // Try to find a suitable replacement
+              if (node.class_type === "CLIPTextEncode") {
+                // For CLIPTextEncode, try to find a CLIP model
+                const clipNodes = nodes.filter(id => 
+                  fixedWorkflow[id].class_type.includes("CLIP") ||
+                  fixedWorkflow[id].class_type === "CheckpointLoaderSimple"
+                );
+                
+                if (clipNodes.length > 0) {
+                  console.log(`Fixing reference: replacing ${referencedNodeId} with ${clipNodes[0]}`);
+                  node.inputs[inputKey] = [clipNodes[0], 1]; // Usually clip is output 1
+                } else {
+                  delete node.inputs[inputKey];
+                }
+              } else if (inputKey === "model") {
+                // For model inputs, find a model node
+                const modelNodes = nodes.filter(id => 
+                  fixedWorkflow[id].class_type.includes("UNETLoader") ||
+                  fixedWorkflow[id].class_type === "CheckpointLoaderSimple" ||
+                  fixedWorkflow[id].class_type === "LoraLoader"
+                );
+                
+                if (modelNodes.length > 0) {
+                  console.log(`Fixing model reference: replacing ${referencedNodeId} with ${modelNodes[0]}`);
+                  node.inputs[inputKey] = [modelNodes[0], 0]; // Model is usually output 0
+                } else {
+                  delete node.inputs[inputKey];
+                }
+              } else {
+                // For other cases, just remove the reference
+                console.log(`Removing invalid reference from node ${nodeId}, input ${inputKey}`);
+                delete node.inputs[inputKey];
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    if (modified) {
+      console.log("Workflow was modified to fix invalid references");
+    }
+    
+    return fixedWorkflow;
+  },
+
+    /**
    * Apply EasyLoraStack to workflow
-   * Based on the flux_redux-lora_mode.json implementation
    * @param {Object} workflow - Original workflow
    * @param {Array} loras - LoRAs to apply
    * @returns {Object} Updated workflow with EasyLoraStack
    */
+  
+/**
+ * Apply EasyLoraStack to workflow - Fixed for your setup
+ * @param {Object} workflow - Original workflow
+ * @param {Array} loras - LoRAs to apply
+ * @returns {Object} Updated workflow with EasyLoraStack
+ */
+ /**
+ * Apply EasyLoraStack to workflow - Fixed for your setup
+ * @param {Object} workflow - Original workflow
+ * @param {Array} loras - LoRAs to apply
+ * @returns {Object} Updated workflow with EasyLoraStack
+ */
   _applyEasyLoraStackToWorkflow(workflow, loras) {
     // Clone the workflow to avoid modifying the original
     const updatedWorkflow = JSON.parse(JSON.stringify(workflow));
     
     console.log(`Applying ${loras.length} LoRAs to workflow using EasyLoraStack`);
+    
+    if (!loras || loras.length === 0) {
+      console.log('No LoRAs to add to workflow');
+      return updatedWorkflow;
+    }
+    
+    // Log the LoRAs being added for debugging
+    console.log("LoRAs being added:", loras.map(lora => ({
+      file_path: lora.file_path,
+      model_strength: lora.model_strength,
+      clip_strength: lora.clip_strength
+    })));
     
     // Find the UNETLoader node (modelNodeId) and DualCLIPLoader node (clipNodeId)
     let modelNodeId = null;
@@ -211,18 +566,18 @@ const ComfyService = {
     
     console.log(`Found ${modelConsumers.length} nodes consuming model output`);
     
-    // Generate high node IDs to avoid conflicts
-    const loraStackNodeId = "91"; // EasyLoraStack node
-    const crApplyNodeId = "110"; // CR Apply LoRA Stack node
+    // Use high node IDs to avoid conflicts (900+ range)
+    const loraStackNodeId = "901";
+    const crApplyNodeId = "902";
     
-    // Create EasyLoraStack node similar to the example workflow
+    // Create EasyLoraStack node
     updatedWorkflow[loraStackNodeId] = {
       "inputs": {
         "toggle": true,
         "mode": "simple",
         "num_loras": Math.min(loras.length, 10) // Maximum 10 LoRAs supported
       },
-      "class_type": "easy loraStack",
+      "class_type": "easy loraStack", // Must match exactly what ComfyUI expects
       "_meta": {
         "title": "EasyLoraStack"
       }
@@ -232,10 +587,15 @@ const ComfyService = {
     loras.forEach((lora, index) => {
       if (index < 10) { // Maximum 10 LoRAs in EasyLoraStack
         const loraIndex = index + 1;
-        updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_name`] = lora.file_path || "None";
-        updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_strength`] = lora.strength || 1.0;
-        updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_model_strength`] = lora.model_strength || 1.0;
-        updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_clip_strength`] = lora.clip_strength || 1.0;
+        
+        // Make sure the lora_name has the correct path
+        const loraPath = lora.file_path || "None";
+        console.log(`Adding LoRA ${loraIndex}: ${loraPath}`);
+        
+        updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_name`] = loraPath;
+        updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_strength`] = parseFloat(lora.strength || 1.0);
+        updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_model_strength`] = parseFloat(lora.model_strength || 1.0);
+        updatedWorkflow[loraStackNodeId].inputs[`lora_${loraIndex}_clip_strength`] = parseFloat(lora.clip_strength || 1.0);
       }
     });
     
@@ -256,11 +616,11 @@ const ComfyService = {
       },
       "class_type": "CR Apply LoRA Stack",
       "_meta": {
-        "title": "💊 CR Apply LoRA Stack"
+        "title": "CR Apply LoRA Stack"
       }
     };
     
-    // Redirect all model consumers to use the CR Apply LoRA Stack output instead
+    // Redirect all model consumers to use the CR Apply LoRA Stack output
     modelConsumers.forEach(consumer => {
       // Only update if this isn't one of our newly added nodes
       if (consumer.id !== loraStackNodeId && consumer.id !== crApplyNodeId) {
@@ -274,584 +634,35 @@ const ComfyService = {
       if (node.inputs) {
         for (const [inputName, inputValue] of Object.entries(node.inputs)) {
           if (Array.isArray(inputValue) && inputValue[0] === clipNodeId) {
-            // Update to use the CLIP output from CR Apply LoRA Stack node
-            updatedWorkflow[id].inputs[inputName] = [crApplyNodeId, 1];
-          }
-        }
-      }
-    }
-    
-    return updatedWorkflow;
-  },
-
-  /**
-   * Verifies that all node references in the workflow exist
-   * @param {Object} workflow - The workflow to verify
-   * @returns {Object} Validated workflow with fixes
-   */
-  _verifyNodeReferences(workflow) {
-    const nodes = Object.keys(workflow);
-    const fixedWorkflow = {...workflow};
-    
-    // Check each node's inputs
-    for (const nodeId in fixedWorkflow) {
-      const node = fixedWorkflow[nodeId];
-      
-      if (node.inputs) {
-        // For each input that references another node
-        for (const inputKey in node.inputs) {
-          const input = node.inputs[inputKey];
-          
-          if (Array.isArray(input) && input.length >= 1 && typeof input[0] === 'string') {
-            const referencedNodeId = input[0];
-            
-            // If the referenced node doesn't exist, log an error and fix it
-            if (!nodes.includes(referencedNodeId)) {
-              console.error(`Node ${nodeId} references non-existent node ${referencedNodeId} in input ${inputKey}`);
-              
-              // Try to find a suitable replacement or use a default approach
-              if (node.class_type === "CLIPTextEncode") {
-                // For CLIPTextEncode nodes, ensure the CLIP model is available
-                const clipNodes = nodes.filter(id => 
-                  fixedWorkflow[id].class_type === "DualCLIPLoader" || 
-                  fixedWorkflow[id].class_type === "CLIPLoader"
-                );
-                
-                if (clipNodes.length > 0) {
-                  console.log(`Fixing reference: replacing ${referencedNodeId} with ${clipNodes[0]}`);
-                  node.inputs[inputKey] = [clipNodes[0], input[1] || 0];
-                } else {
-                  // If we can't find a suitable replacement, remove the reference
-                  delete node.inputs[inputKey];
-                }
-              } else {
-                // For other node types, handle case by case or remove the reference
-                console.log(`Removing invalid reference from node ${nodeId}, input ${inputKey}`);
-                delete node.inputs[inputKey];
-              }
+            // Don't change connections in our LoRA nodes
+            if (id !== loraStackNodeId && id !== crApplyNodeId) {
+              // Update to use the CLIP output from CR Apply LoRA Stack node
+              updatedWorkflow[id].inputs[inputName] = [crApplyNodeId, 1];
             }
           }
         }
       }
     }
     
-    return fixedWorkflow;
-  },
-  
-  /**
-   * Create a standard Flux workflow with optional image inputs
-   */
-  createSimpleFluxWorkflow({ prompt, steps = 20, filenamePrefix = 'Otherides-2d' }) {
-    console.log("Creating standard Flux workflow with params:", { prompt, steps, filenamePrefix });
-    
-    // Add timestamp to make the generation unique
-    const timestamp = new Date().getTime();
-    
-    // Base workflow object - simplified for example
-    const workflow = {
-      // This would contain the standard basic workflow nodes
-      // Simplified for this example
-      "3": {
-        "inputs": {
-          "text": filenamePrefix
-        },
-        "class_type": "Text",
-      },
-      "5": {
-        "inputs": {
-          "text": prompt
-        },
-        "class_type": "CLIPTextEncode",
-      },
-      "6": {
-        "inputs": {
-          "steps": steps
-        },
-        "class_type": "KSampler",
-      },
-      "7": {
-        "inputs": {
-          "filename_prefix": [
-            "3",
-            0
-          ],
-          "images": [
-            "6",
-            0
-          ]
-        },
-        "class_type": "SaveImage",
-      }
-    };
-
-    // We'll let Base64Service handle the image loading
-    return { workflow, timestamp };
-  },
-  
-  /**
-   * Create an advanced Flux workflow with Redux styling and depth conditioning
-   */
-  createFluxAdvancedWorkflow({ 
-    prompt, 
-    steps = 20, 
-    reduxStrength = 0.5,
-    useDepth = true,
-    filenamePrefix = 'Otherides-2d_' 
-  }) {
-    console.log("Creating advanced Flux workflow with params:", { 
-    prompt, steps, reduxStrength, useDepth, filenamePrefix 
-    });
-    
-    // Add timestamp to make the generation unique
-    const timestamp = new Date().getTime();
-    
-    // Start with the base Redux workflow structure from the provided example
-    const workflow = {
-      "77": {
-        "inputs": {
-          "filename_prefix": [
-            "82",
-            0
-          ],
-          "images": [
-            "81",
-            0
-          ]
-        },
-        "class_type": "SaveImage",
-        "_meta": {
-          "title": "Save Image"
-        }
-      },
-      "78": {
-        "inputs": {
-          "unet_name": "blackforest/flux1-depth-dev.safetensors",
-          "weight_dtype": "fp8_e4m3fn"
-        },
-        "class_type": "UNETLoader",
-        "_meta": {
-          "title": "Load Diffusion Model"
-        }
-      },
-      "79": {
-        "inputs": {
-          "text": "",
-          "clip": [
-            "80",
-            0
-          ]
-        },
-        "class_type": "CLIPTextEncode",
-        "_meta": {
-          "title": "CLIP Text Encode (Prompt)"
-        }
-      },
-      "80": {
-        "inputs": {
-          "clip_name1": "Flux/t5xxl_fp16.safetensors",
-          "clip_name2": "Flux/clip_l.safetensors",
-          "type": "flux",
-          "device": "default"
-        },
-        "class_type": "DualCLIPLoader",
-        "_meta": {
-          "title": "DualCLIPLoader"
-        }
-      },
-      "81": {
-        "inputs": {
-          "samples": [
-            "100",
-            0
-          ],
-          "vae": [
-            "90",
-            0
-          ]
-        },
-        "class_type": "VAEDecode",
-        "_meta": {
-          "title": "VAE Decode"
-        }
-      },
-      "82": {
-        "inputs": {
-          "text": `${filenamePrefix}_${timestamp}`
-        },
-        "class_type": "Text Multiline",
-        "_meta": {
-          "title": "Text Multiline"
-        }
-      },
-      "83": {
-        "inputs": {
-          "value": 1024
-        },
-        "class_type": "INTConstant",
-        "_meta": {
-          "title": "Width"
-        }
-      },
-      "84": {
-        "inputs": {
-          "value": 1024
-        },
-        "class_type": "INTConstant",
-        "_meta": {
-          "title": "Height"
-        }
-      },
-      "85": {
-        "inputs": {
-          "image": "placeholder.png"  // This will be replaced by Base64Service
-        },
-        "class_type": "LoadImage",
-        "_meta": {
-          "title": "Load Image (Placeholder)"
-        }
-      },
-      "86": {
-        "inputs": {
-          "width": [
-            "83",
-            0
-          ],
-          "height": [
-            "84",
-            0
-          ],
-          "interpolation": "bicubic",
-          "method": "keep proportion",
-          "condition": "always",
-          "multiple_of": 16,
-          "image": [
-            "85", 
-            0
-          ]
-        },
-        "class_type": "ImageResize+",
-        "_meta": {
-          "title": "🔧 Image Resize"
-        }
-      },
-      "88": {
-        "inputs": {
-          "width": [
-            "86",
-            1
-          ],
-          "height": [
-            "86",
-            2
-          ],
-          "batch_size": 1
-        },
-        "class_type": "EmptyLatentImage",
-        "_meta": {
-          "title": "Empty Latent Image"
-        }
-      },
-      "89": {
-        "inputs": {
-          "text": prompt,
-          "clip": [
-            "80",
-            0
-          ]
-        },
-        "class_type": "CLIPTextEncode",
-        "_meta": {
-          "title": "CLIP Text Encode (Prompt)"
-        }
-      },
-      "90": {
-        "inputs": {
-          "vae_name": "ae.sft"
-        },
-        "class_type": "VAELoader",
-        "_meta": {
-          "title": "Load VAE"
-        }
-      },
-      "92": {
-        "inputs": {
-          "max_shift": 1.25,
-          "base_shift": 0.5,
-          "width": 1024,
-          "height": 1024,
-          "model": [
-            "78",
-            0
-          ]
-        },
-        "class_type": "ModelSamplingFlux",
-        "_meta": {
-          "title": "ModelSamplingFlux"
-        }
-      },
-      "94": {
-        "inputs": {
-          "image": "placeholder.png"  // This will be replaced by Base64Service
-        },
-        "class_type": "LoadImage",
-        "_meta": {
-          "title": "Load Redux Image (Placeholder)"
-        }
-      },
-      "95": {
-        "inputs": {
-          "clip_name": "sigclip_vision_patch14_384.safetensors"
-        },
-        "class_type": "CLIPVisionLoader",
-        "_meta": {
-          "title": "Load CLIP Vision"
-        }
-      },
-      "96": {
-        "inputs": {
-          "style_model_name": "flux1-redux-dev.safetensors"
-        },
-        "class_type": "StyleModelLoader",
-        "_meta": {
-          "title": "Load Style Model"
-        }
-      },
-      "100": {
-        "inputs": {
-          "noise": [
-            "102",
-            0
-          ],
-          "guider": [
-            "103",
-            0
-          ],
-          "sampler": [
-            "104",
-            0
-          ],
-          "sigmas": [
-            "109",
-            0
-          ],
-          "latent_image": [
-            "88",
-            0
-          ]
-        },
-        "class_type": "SamplerCustomAdvanced",
-        "_meta": {
-          "title": "SamplerCustomAdvanced"
-        }
-      },
-      "102": {
-        "inputs": {
-          "noise_seed": Math.floor(Math.random() * 1000000)
-        },
-        "class_type": "RandomNoise",
-        "_meta": {
-          "title": "RandomNoise"
-        }
-      },
-      "103": {
-        "inputs": {
-          "model": [
-            "92",
-            0
-          ],
-          "conditioning": [
-            "108",
-            0
-          ]
-        },
-        "class_type": "BasicGuider",
-        "_meta": {
-          "title": "BasicGuider"
-        }
-      },
-      "104": {
-        "inputs": {
-          "sampler_name": "euler"
-        },
-        "class_type": "KSamplerSelect",
-        "_meta": {
-          "title": "KSamplerSelect"
-        }
-      },
-      "105": {
-        "inputs": {
-          "text": prompt.split(',').slice(0, 5).join(', '), // Use first few tags for condensed prompt
-          "clip": [
-            "80",
-            0
-          ]
-        },
-        "class_type": "CLIPTextEncode",
-        "_meta": {
-          "title": "CLIP Text Encode (Prompt)"
-        }
-      },
-      "109": {
-        "inputs": {
-          "scheduler": "simple",
-          "steps": steps,
-          "denoise": 1,
-          "model": [
-            "92",
-            0
-          ]
-        },
-        "class_type": "BasicScheduler",
-        "_meta": {
-          "title": "BasicScheduler"
-        }
-      },
-      "111": {
-        "inputs": {
-          "model": "depth_anything_v2_vitl_fp16.safetensors"
-        },
-        "class_type": "DownloadAndLoadDepthAnythingV2Model",
-        "_meta": {
-          "title": "DownloadAndLoadDepthAnythingV2Model"
-        }
-      },
-      "113": {
-        "inputs": {
-          "guidance": 15,
-          "conditioning": [
-            "114",
-            0
-          ]
-        },
-        "class_type": "FluxGuidance",
-        "_meta": {
-          "title": "FluxGuidance"
-        }
-      },
-      "114": {
-        "inputs": {
-          "conditioning_to": [
-            "105",
-            0
-          ],
-          "conditioning_from": [
-            "89",
-            0
-          ]
-        },
-        "class_type": "ConditioningConcat",
-        "_meta": {
-          "title": "Conditioning (Concat)"
-        }
-      }
-    };
-    
-    // Add depth extraction if enabled
-    if (useDepth) {
-      workflow["106"] = {
-        "inputs": {
-          "da_model": [
-            "111",
-            0
-          ],
-          "images": [
-            "86",
-            0
-          ]
-        },
-        "class_type": "DepthAnything_V2",
-        "_meta": {
-          "title": "Depth Anything V2"
-        }
-      };
-      
-      workflow["107"] = {
-        "inputs": {
-          "positive": [
-            "113",
-            0
-          ],
-          "negative": [
-            "79",
-            0
-          ],
-          "vae": [
-            "90",
-            0
-          ],
-          "pixels": [
-            "106",
-            0
-          ]
-        },
-        "class_type": "InstructPixToPixConditioning",
-        "_meta": {
-          "title": "InstructPixToPixConditioning"
-        }
-      };
-      
-      // Connect to style application without depending on reduxImageUrl
-      workflow["108"] = {
-        "inputs": {
-          "strength": reduxStrength,
-          "conditioning": [
-            "107",
-            0
-          ],
-          "style_model": [
-            "96",
-            0
-          ]
-          // clip_vision_output will be added in the form handler if needed
-        },
-        "class_type": "StyleModelApplyAdvanced",
-        "_meta": {
-          "title": "🖌️ Style Model Apply (Advanced)"
-        }
-      };
-    } else {
-      // No depth conditioning - direct style application to conditioning
-      workflow["108"] = {
-        "inputs": {
-          "strength": reduxStrength,
-          "conditioning": [
-            "89",
-            0
-          ],
-          "style_model": [
-            "96",
-            0
-          ]
-          // clip_vision_output will be added in the form handler if needed
-        },
-        "class_type": "StyleModelApplyAdvanced",
-        "_meta": {
-          "title": "🖌️ Style Model Apply (Advanced)"
-        }
-      };
-    }
-    
-    // Add CLIPVisionEncode node for Redux (will be connected in form handler if needed)
-    workflow["93"] = {
-      "inputs": {
-        "crop": "center",
-        "clip_vision": [
-          "95",
-          0
-        ],
-        "image": [
-          "94",
-          0
-        ]
-      },
-      "class_type": "CLIPVisionEncode",
-      "_meta": {
-        "title": "CLIP Vision Encode"
-      }
-    };
-    
-    return { workflow, timestamp };
+    return updatedWorkflow;
   }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 };
 
 export default ComfyService;

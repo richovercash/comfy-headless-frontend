@@ -143,7 +143,8 @@ const FluxGenerationForm = () => {
       
       // Choose workflow type based on settings
       let workflowResult;
-      
+      // console.log("LoRAs being sent to workflow:", loras.map(l => l.file_path));
+
       if (useAdvancedWorkflow) {
         workflowResult = ComfyService.createFluxAdvancedWorkflow({
           prompt: values.prompt,
@@ -162,7 +163,12 @@ const FluxGenerationForm = () => {
         });
       }
       
-      // Save timestamp for later
+
+            // In FluxGenerationForm.jsx, in the handleSubmit function
+      console.log("DEBUG LORAS: Selected LoRAs data:", selectedLoras);
+      console.log("DEBUG LORAS: LoRA count:", selectedLoras.length);
+      console.log("DEBUG LORAS: First LoRA file path:", selectedLoras[0]?.file_path);
+            // Save timestamp for later
       const timestamp = workflowResult.timestamp;
       setGenerationTimestamp(timestamp);
       
@@ -447,6 +453,9 @@ const FluxGenerationForm = () => {
       }
       
       console.log("Asset created:", assetData);
+      console.log("DEBUG LORAS: Selected LoRAs data:", selectedLoras);
+      console.log("DEBUG LORAS: LoRA count:", selectedLoras.length);
+      console.log("DEBUG LORAS: First LoRA file path:", selectedLoras[0]?.file_path);
       
       // Link asset to session
       if (assetData && assetData.length > 0) {
@@ -475,6 +484,8 @@ const FluxGenerationForm = () => {
           console.log("Asset linked to session successfully");
         }
       }
+      console.log("DEBUG LORAS: LoRA count:", selectedLoras.length);
+      console.log("DEBUG LORAS: First LoRA file path:", selectedLoras[0]?.file_path);
       
       // Update session status to completed
       console.log("Updating session status to completed");
@@ -618,8 +629,81 @@ const FluxGenerationForm = () => {
     return `${bucket}/${filename}`;
   };
 
+
+    // Verify the strength settings when selecting LoRAs
   const handleLorasChange = (loras) => {
-    setSelectedLoras(loras);
+    console.log("DEBUG LORAS: Received LoRAs from selector:", loras);
+  };
+
+  // const handleLorasChange = (loras) => {
+  //   setSelectedLoras(loras);
+  // };
+
+  const testLoraIntegration = async () => {
+    setStatus({ message: 'Testing LoRA integration...', error: false });
+    
+    try {
+      // First, debug the EasyLoraStack setup
+      const debugResult = await loraService.debugEasyLoraStack();
+      console.log("EasyLoraStack debug result:", debugResult);
+      
+      if (!debugResult.success) {
+        setStatus({ 
+          message: `EasyLoraStack setup issue: ${debugResult.errors.join(', ')}`, 
+          error: true 
+        });
+        return;
+      }
+      
+      // Get available LoRAs from ComfyUI
+      const availableLoras = await loraService.getAvailableLorasFromComfyUI();
+      console.log(`Found ${availableLoras.length} LoRAs in ComfyUI`);
+      
+      if (availableLoras.length === 0) {
+        setStatus({ 
+          message: 'No LoRAs found in ComfyUI. Check your installation.', 
+          error: true 
+        });
+        return;
+      }
+      
+      // Create a simple test workflow
+      const testLoras = availableLoras.slice(0, 3); // Use first 3 LoRAs for test
+      
+      const workflowResult = ComfyService.createFluxWorkflow({
+        prompt: "Test prompt",
+        steps: 10,
+        filenamePrefix: "lora_test",
+        loras: testLoras
+      });
+      
+      // Check if the workflow contains the EasyLoraStack and CR Apply LoRA Stack nodes
+      const hasEasyLoraStack = Object.values(workflowResult.workflow).some(
+        node => node.class_type === "easy loraStack"
+      );
+      
+      const hasCRApply = Object.values(workflowResult.workflow).some(
+        node => node.class_type === "CR Apply LoRA Stack"
+      );
+      
+      if (hasEasyLoraStack && hasCRApply) {
+        setStatus({ 
+          message: `Success! Test workflow created with ${testLoras.length} LoRAs. EasyLoraStack and CR Apply LoRA Stack nodes were added correctly.`, 
+          error: false 
+        });
+      } else {
+        setStatus({ 
+          message: `Partial success: Found ${availableLoras.length} LoRAs but workflow integration failed. EasyLoraStack: ${hasEasyLoraStack}, CR Apply: ${hasCRApply}`, 
+          error: true 
+        });
+      }
+    } catch (error) {
+      console.error("Error testing LoRA integration:", error);
+      setStatus({ 
+        message: `Error testing LoRA integration: ${error.message}`, 
+        error: true 
+      });
+    }
   };
 
   return (

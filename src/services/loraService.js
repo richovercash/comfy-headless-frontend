@@ -939,7 +939,7 @@ class LoraService {
       
       // 4. Verify the result
       const hasLoraStack = Object.values(workflowWithLoras).some(
-        node => node.class_type === "easy_loraStack"
+        node => node.class_type === "easy loraStack"
       );
       
       const hasApplyStack = Object.values(workflowWithLoras).some(
@@ -978,14 +978,14 @@ class LoraService {
       const data = await response.json();
       
       // Check if EasyLoraStack exists
-      if (data.easy_loraStack) {
-        console.log("Found EasyLoraStack component:", data.easy_loraStack);
+      if (data.easyloraStack) {
+        console.log("Found EasyLoraStack component:", data.easyloraStack);
         
         // Inspect each lora_X_name field to understand the structure
         for (let i = 1; i <= 10; i++) {
           const fieldName = `lora_${i}_name`;
-          if (data.easy_loraStack.input?.optional?.[fieldName]) {
-            console.log(`Structure of ${fieldName}:`, JSON.stringify(data.easy_loraStack.input.optional[fieldName]));
+          if (data.easyloraStack.input?.optional?.[fieldName]) {
+            console.log(`Structure of ${fieldName}:`, JSON.stringify(data.easyloraStack.input.optional[fieldName]));
           }
         }
       } else {
@@ -1006,7 +1006,7 @@ class LoraService {
       }
       
       return {
-        hasEasyLoraStack: !!data.easy_loraStack,
+        hasEasyLoraStack: !!data.easyloraStack,
         hasLoraLoader: !!data.LoraLoader,
         // Extract any fields that might contain LoRA paths
         possibleLoraFields: Object.keys(data).filter(key => 

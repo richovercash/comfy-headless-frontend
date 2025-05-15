@@ -3,6 +3,7 @@ import React from 'react';
 import styled from 'styled-components';
 import LoraDiagnostics from '../components/LoraDiagnostics';
 import LoraDebugger from '../components/LoraDebugger';
+import LoraIntegrationFixer from '../components/LoraIntegrationFixer'
 
 const LoraToolsPage = () => {
   return (
@@ -26,6 +27,14 @@ const LoraToolsPage = () => {
         </p>
         <LoraDebugger />
       </Section>
+
+
+    <Section>
+        <h3> Lora Integration Fixer</h3>
+        <p> Use this tool and pray</p>
+        <LoraIntegrationFixer/>
+    </Section>
+
     </Container>
   );
 };
