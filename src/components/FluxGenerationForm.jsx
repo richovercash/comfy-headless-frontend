@@ -630,14 +630,22 @@ const FluxGenerationForm = () => {
   };
 
 
-    // Verify the strength settings when selecting LoRAs
+  // In src/components/FluxGenerationForm.jsx, find this function:
   const handleLorasChange = (loras) => {
     console.log("DEBUG LORAS: Received LoRAs from selector:", loras);
+    // Actually update the state with the selected LoRAs
+    setSelectedLoras(loras);
+    
+    // Log detailed information about the LoRAs for debugging
+    if (loras && loras.length > 0) {
+      console.log("DEBUG LORAS: First LoRA details:", {
+        name: loras[0].name,
+        file_path: loras[0].file_path,
+        model_strength: loras[0].model_strength,
+        clip_strength: loras[0].clip_strength
+      });
+    }
   };
-
-  // const handleLorasChange = (loras) => {
-  //   setSelectedLoras(loras);
-  // };
 
   const testLoraIntegration = async () => {
     setStatus({ message: 'Testing LoRA integration...', error: false });
@@ -975,7 +983,136 @@ const FluxGenerationForm = () => {
         >
           Debug ComfyUI API
         </Button>
+        <Button 
+          type="button"
+          className="secondary"
+          onClick={async () => {
+            setStatus({ message: 'Debugging ComfyUI nodes...', error: false });
+            
+            try {
+              const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
+              const response = await fetch(`${API_BASE_URL}/object_info`);
+              
+              if (!response.ok) {
+                throw new Error(`API responded with status: ${response.status}`);
+              }
+              
+              const data = await response.json();
+              
+              // Look for LoRA-related nodes
+              const loraNodes = Object.keys(data).filter(name => 
+                name.toLowerCase().includes('lora') || 
+                name.toLowerCase().includes('stack')
+              );
+              
+              console.log("ComfyUI LoRA-related nodes:", loraNodes);
+              
+              // Check if the exact nodes we need exist
+              const hasEasyLoraStack = data['easy loraStack'] !== undefined;
+              const hasCRApplyStack = data['CR Apply LoRA Stack'] !== undefined;
+              
+              console.log("Has 'easy loraStack' node:", hasEasyLoraStack);
+              console.log("Has 'CR Apply LoRA Stack' node:", hasCRApplyStack);
+              
+              // Check the structure of the easy loraStack node to understand parameters
+              if (hasEasyLoraStack) {
+                console.log("easy loraStack structure:", data['easy loraStack']);
+              }
+              
+              setStatus({ 
+                message: `Found ${loraNodes.length} LoRA-related nodes. Easy Stack: ${hasEasyLoraStack}, CR Apply: ${hasCRApplyStack}`, 
+                error: false 
+              });
+            } catch (error) {
+              console.error("Error debugging nodes:", error);
+              setStatus({ 
+                message: `Error: ${error.message}`, 
+                error: true 
+              });
+            }
+          }}
+        >
+          Debug ComfyUI Nodes
+        </Button>
 
+        // Add a test button to your troubleshooting section in FluxGenerationForm.jsx
+        // This will let you manually test LoRA integration
+
+      <Button 
+        type="button"
+        className="secondary"
+        onClick={async () => {
+          setStatus({ message: 'Testing LoRA integration...', error: false });
+          
+          try {
+            // Create a test set of LoRAs using paths from your system
+            const testLoras = [
+              {
+                id: "test1",
+                name: "Neon Cyberpunk",
+                file_path: "Flux/Neon_Cyberpunk_Cyberspace_FLUX.safetensors",
+                model_strength: 1.0,
+                clip_strength: 1.0
+              },
+              {
+                id: "test2",
+                name: "Gatling",
+                file_path: "Flux/OtherRides/gatling-000008.safetensors",
+                model_strength: 0.8, 
+                clip_strength: 1.0
+              }
+            ];
+            
+            console.log("Running manual LoRA test with LoRAs:", testLoras);
+            
+            // Create a workflow with these LoRAs
+            const workflowResult = ComfyService.createFluxWorkflow({
+              prompt: "Test prompt",
+              steps: 20,
+              filenamePrefix: "lora_test",
+              loras: testLoras
+            });
+            
+            // Check if the workflow has LoRA nodes
+            const workflow = workflowResult.workflow;
+            
+            const loraStackNode = Object.entries(workflow).find(([_, node]) => 
+              node.class_type === "easy loraStack"
+            );
+            
+            const crApplyNode = Object.entries(workflow).find(([_, node]) => 
+              node.class_type === "CR Apply LoRA Stack"
+            );
+            
+            if (loraStackNode && crApplyNode) {
+              setStatus({ 
+                message: `Success! LoRA integration working. Found nodes: ${loraStackNode[0]} (Stack) and ${crApplyNode[0]} (Apply)`, 
+                error: false 
+              });
+              
+              console.log("LoRA stack node:", loraStackNode);
+              console.log("CR Apply node:", crApplyNode);
+            } else {
+              setStatus({ 
+                message: `Failed: LoRA nodes not found in workflow. Check console for details.`, 
+                error: true 
+              });
+              
+              // Try direct integration test
+              const testResult = await ComfyService.testLoraIntegration();
+              console.log("Direct test result:", testResult);
+            }
+          } catch (error) {
+            console.error("Error testing LoRA integration:", error);
+            setStatus({ 
+              message: `Error: ${error.message}`, 
+              error: true 
+            });
+          }
+        }}
+      >
+        Test LoRA Integration
+      </Button>
 
 
 
