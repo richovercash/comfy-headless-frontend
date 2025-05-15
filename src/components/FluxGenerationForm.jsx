@@ -759,7 +759,7 @@ const FluxGenerationForm = () => {
           </>
         )}
 
-        
+
         <ToggleContainer>
           <ToggleButton 
             type="button"
@@ -833,6 +833,69 @@ const FluxGenerationForm = () => {
         >
           {showTroubleshooter ? 'Hide Troubleshooter' : 'Show Advanced Troubleshooter'}
         </Button>
+        <Button 
+          type="button"
+          className="secondary"
+          onClick={async () => {
+            setStatus({ message: 'Testing EasyLoraStack integration...', error: false });
+            
+            try {
+              const result = await loraService.testEasyLoraStackIntegration();
+              console.log("EasyLoraStack integration test result:", result);
+              
+              if (result.success) {
+                setStatus({ 
+                  message: `Success! Found ${result.lorasFound} LoRAs and created workflow with ${result.lorasUsed} LoRAs.`, 
+                  error: false 
+                });
+              } else {
+                setStatus({ 
+                  message: `Integration test failed: ${result.error || 'Unknown error'}`, 
+                  error: true 
+                });
+              }
+            } catch (error) {
+              console.error("Error testing integration:", error);
+              setStatus({ 
+                message: `Error: ${error.message}`, 
+                error: true 
+              });
+            }
+          }}
+        >
+          Test EasyLoraStack Integration
+        </Button>
+
+        <Button 
+          type="button"
+          className="secondary"
+          onClick={async () => {
+            setStatus({ message: 'Debugging ComfyUI Object Info...', error: false });
+            
+            try {
+              const result = await loraService.debugObjectInfo();
+              console.log("Object Info Debug Result:", result);
+              
+              setStatus({ 
+                message: `Debug complete. Check console for details.`, 
+                error: false 
+              });
+            } catch (error) {
+              console.error("Error debugging object info:", error);
+              setStatus({ 
+                message: `Error: ${error.message}`, 
+                error: true 
+              });
+            }
+          }}
+        >
+          Debug ComfyUI API
+        </Button>
+
+
+
+
+
       </TroubleshootingSection>
       
       {showTroubleshooter && <ComfyUITroubleshooter />}

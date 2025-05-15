@@ -107,8 +107,8 @@ router.get('/get-loras-from-comfyui', async (req, res) => {
     // Extract LoRA information from the API response
     const loras = [];
     
-    if (data?.LoraLoader?.input?.required?.lora_name?.options) {
-      const loraOptions = data.LoraLoader.input.required.lora_name.options;
+    if (data?.FluxLoraLoader?.input?.required?.lora_name?.options) {
+      const loraOptions = data.FluxLoraLoader.input.required.lora_name.options;
       
       for (const [filePath, displayName] of Object.entries(loraOptions)) {
         if (filePath === 'None') continue;

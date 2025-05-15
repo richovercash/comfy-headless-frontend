@@ -1,0 +1,505 @@
+{
+  "77": {
+    "inputs": {
+      "filename_prefix": [
+        "82",
+        0
+      ],
+      "images": [
+        "81",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "78": {
+    "inputs": {
+      "unet_name": "blackforest/flux1-depth-dev.safetensors",
+      "weight_dtype": "fp8_e4m3fn"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "79": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "110",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "80": {
+    "inputs": {
+      "clip_name1": "Flux/t5xxl_fp16.safetensors",
+      "clip_name2": "Flux/clip_l.safetensors",
+      "type": "flux",
+      "device": "default"
+    },
+    "class_type": "DualCLIPLoader",
+    "_meta": {
+      "title": "DualCLIPLoader"
+    }
+  },
+  "81": {
+    "inputs": {
+      "samples": [
+        "100",
+        0
+      ],
+      "vae": [
+        "90",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "82": {
+    "inputs": {
+      "text": "Otherides-2d"
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "Text Multiline"
+    }
+  },
+  "83": {
+    "inputs": {
+      "value": 1024
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "Width"
+    }
+  },
+  "84": {
+    "inputs": {
+      "value": 1024
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "Height"
+    }
+  },
+  "85": {
+    "inputs": {
+      "image": "motobike.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "86": {
+    "inputs": {
+      "width": [
+        "83",
+        0
+      ],
+      "height": [
+        "84",
+        0
+      ],
+      "interpolation": "bicubic",
+      "method": "keep proportion",
+      "condition": "always",
+      "multiple_of": 16,
+      "image": [
+        "85",
+        0
+      ]
+    },
+    "class_type": "ImageResize+",
+    "_meta": {
+      "title": "🔧 Image Resize"
+    }
+  },
+  "88": {
+    "inputs": {
+      "width": [
+        "86",
+        1
+      ],
+      "height": [
+        "86",
+        2
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "89": {
+    "inputs": {
+      "text": "neon-mist, cpstyle, rock!,\n\nA high-resolution digital artwork featuring a futuristic, cybernetic motorcycle  intricate mechanical design. the sleek, robotic exoskeleton is predominantly black and shiny with striking orange accents, composed of interlocking plates, exposed wiring, and glowing circuitry that pulse with an eerie energy. A large, front windscreen protects the driver, its reflective surface displaying cryptic digital patterns, reinforcing the enigmatic, android-like presence.\nThe cowl is adorned with an advanced neural interface that wraps into a high caliber gatling gun aimed at the oncomgin vehicle, an intricate headdress of segmented metal plating and delicate fiber-optic strands woven together like a synthetic crown. It integrates seamlessly into the high-tech plating along body of the bike forming a rigid yet elegant collar with engraved circuitry patterns. Thin mechanical tendrils extend from the engine to the rear, glowing faintly as they process vast streams of data.\nThe fusion of biomechanical and traditional elements is evident in the subtle engravings along the side plating, resembling ancient embroidery reimagined through futuristic technology. The background is a cold, gradient blue, evoking the sterile atmosphere of a deep-space research station or an advanced AI laboratory. Every element is meticulously detailed, blending high-concept cyberpunk aesthetics with cutting-edge digital craftsmanship. with hard rubber tires\n\n\n",
+      "clip": [
+        "110",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "90": {
+    "inputs": {
+      "vae_name": "ae.sft"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "91": {
+    "inputs": {
+      "toggle": true,
+      "mode": "simple",
+      "num_loras": 6,
+      "lora_1_name": "Flux/Neon_Cyberpunk_Cyberspace_FLUX.safetensors",
+      "lora_1_strength": 1.0000000000000002,
+      "lora_1_model_strength": 1,
+      "lora_1_clip_strength": 1,
+      "lora_2_name": "Flux/OtherRides/gatling-000008.safetensors",
+      "lora_2_strength": 1.0000000000000002,
+      "lora_2_model_strength": 0.8,
+      "lora_2_clip_strength": 1,
+      "lora_3_name": "flux/madocalypse.safetensors",
+      "lora_3_strength": 0.8000000000000002,
+      "lora_3_model_strength": 1,
+      "lora_3_clip_strength": 1,
+      "lora_4_name": "Flux/neon-mist03-000015.safetensors",
+      "lora_4_strength": 0.6,
+      "lora_4_model_strength": 1,
+      "lora_4_clip_strength": 1,
+      "lora_5_name": "Flux/Sinfully_Stylish_1.0_Flux.safetensors",
+      "lora_5_strength": 0.6,
+      "lora_5_model_strength": 1,
+      "lora_5_clip_strength": 1,
+      "lora_6_name": "Flux/anotherdysto02-000019.safetensors",
+      "lora_6_strength": 0.45,
+      "lora_6_model_strength": 1,
+      "lora_6_clip_strength": 1,
+      "lora_7_name": "None",
+      "lora_7_strength": 1,
+      "lora_7_model_strength": 1,
+      "lora_7_clip_strength": 1,
+      "lora_8_name": "None",
+      "lora_8_strength": 1,
+      "lora_8_model_strength": 1,
+      "lora_8_clip_strength": 1,
+      "lora_9_name": "None",
+      "lora_9_strength": 1,
+      "lora_9_model_strength": 1,
+      "lora_9_clip_strength": 1,
+      "lora_10_name": "None",
+      "lora_10_strength": 1,
+      "lora_10_model_strength": 1,
+      "lora_10_clip_strength": 1
+    },
+    "class_type": "easy loraStack",
+    "_meta": {
+      "title": "EasyLoraStack"
+    }
+  },
+  "92": {
+    "inputs": {
+      "max_shift": 1.25,
+      "base_shift": 0.5,
+      "width": 1024,
+      "height": 1024,
+      "model": [
+        "110",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingFlux",
+    "_meta": {
+      "title": "ModelSamplingFlux"
+    }
+  },
+  "93": {
+    "inputs": {
+      "crop": "center",
+      "clip_vision": [
+        "95",
+        0
+      ],
+      "image": [
+        "94",
+        0
+      ]
+    },
+    "class_type": "CLIPVisionEncode",
+    "_meta": {
+      "title": "CLIP Vision Encode"
+    }
+  },
+  "94": {
+    "inputs": {
+      "image": "Image_00019_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "95": {
+    "inputs": {
+      "clip_name": "sigclip_vision_patch14_384.safetensors"
+    },
+    "class_type": "CLIPVisionLoader",
+    "_meta": {
+      "title": "Load CLIP Vision"
+    }
+  },
+  "96": {
+    "inputs": {
+      "style_model_name": "flux1-redux-dev.safetensors"
+    },
+    "class_type": "StyleModelLoader",
+    "_meta": {
+      "title": "Load Style Model"
+    }
+  },
+  "99": {
+    "inputs": {
+      "width": 2000,
+      "height": 2000,
+      "position": "bottom-center",
+      "x_offset": 0,
+      "y_offset": 0,
+      "image": [
+        "94",
+        0
+      ]
+    },
+    "class_type": "ImageCrop+",
+    "_meta": {
+      "title": "🔧 Image Crop"
+    }
+  },
+  "100": {
+    "inputs": {
+      "noise": [
+        "102",
+        0
+      ],
+      "guider": [
+        "103",
+        0
+      ],
+      "sampler": [
+        "104",
+        0
+      ],
+      "sigmas": [
+        "109",
+        0
+      ],
+      "latent_image": [
+        "88",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "102": {
+    "inputs": {
+      "noise_seed": 150
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "103": {
+    "inputs": {
+      "model": [
+        "92",
+        0
+      ],
+      "conditioning": [
+        "108",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "BasicGuider"
+    }
+  },
+  "104": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "105": {
+    "inputs": {
+      "text": "neon-mist, cpstyle, rock!, Gatling_mounted",
+      "clip": [
+        "110",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "106": {
+    "inputs": {
+      "da_model": [
+        "111",
+        0
+      ],
+      "images": [
+        "86",
+        0
+      ]
+    },
+    "class_type": "DepthAnything_V2",
+    "_meta": {
+      "title": "Depth Anything V2"
+    }
+  },
+  "107": {
+    "inputs": {
+      "positive": [
+        "113",
+        0
+      ],
+      "negative": [
+        "79",
+        0
+      ],
+      "vae": [
+        "90",
+        0
+      ],
+      "pixels": [
+        "106",
+        0
+      ]
+    },
+    "class_type": "InstructPixToPixConditioning",
+    "_meta": {
+      "title": "InstructPixToPixConditioning"
+    }
+  },
+  "108": {
+    "inputs": {
+      "strength": 0.5000000000000001,
+      "conditioning": [
+        "107",
+        0
+      ],
+      "style_model": [
+        "96",
+        0
+      ],
+      "clip_vision_output": [
+        "93",
+        0
+      ]
+    },
+    "class_type": "StyleModelApplyAdvanced",
+    "_meta": {
+      "title": "🖌️ Style Model Apply (Advanced)"
+    }
+  },
+  "109": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": 20,
+      "denoise": 1,
+      "model": [
+        "92",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "110": {
+    "inputs": {
+      "model": [
+        "78",
+        0
+      ],
+      "clip": [
+        "80",
+        0
+      ],
+      "lora_stack": [
+        "91",
+        0
+      ]
+    },
+    "class_type": "CR Apply LoRA Stack",
+    "_meta": {
+      "title": "💊 CR Apply LoRA Stack"
+    }
+  },
+  "111": {
+    "inputs": {
+      "model": "depth_anything_v2_vitl_fp16.safetensors"
+    },
+    "class_type": "DownloadAndLoadDepthAnythingV2Model",
+    "_meta": {
+      "title": "DownloadAndLoadDepthAnythingV2Model"
+    }
+  },
+  "113": {
+    "inputs": {
+      "guidance": 15,
+      "conditioning": [
+        "114",
+        0
+      ]
+    },
+    "class_type": "FluxGuidance",
+    "_meta": {
+      "title": "FluxGuidance"
+    }
+  },
+  "114": {
+    "inputs": {
+      "conditioning_to": [
+        "105",
+        0
+      ],
+      "conditioning_from": [
+        "89",
+        0
+      ]
+    },
+    "class_type": "ConditioningConcat",
+    "_meta": {
+      "title": "Conditioning (Concat)"
+    }
+  }
+}

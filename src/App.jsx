@@ -7,6 +7,8 @@ import AssetDetailPage from './pages/AssetDetailPage';
 import GenerationPage from './pages/GenerationPage';
 import SessionsPage from './pages/SessionsPage';
 import Base64TestPage from './pages/Base64TestPage';
+import LoraDiagnostics from './components/LoraDiagnostics';
+import LoraToolsPage from './pages/LoraToolsPage';
 
 import ComfyUITroubleshooter from './components/ComfyUITroubleshooter';
 
@@ -107,6 +109,9 @@ function App() {
             <Route path="/sessions" element={<SessionsPage />} />
             <Route path="/generate" element={<GenerationPage />} />
             <Route path="/base64-test" element={<Base64TestPage />} />
+            {/* Add this new route */}
+            {/* <Route path="/lora-tools" element={<LoraDiagnostics />} /> */}
+            <Route path="/lora-tools" element={<LoraToolsPage />} />
             
 
             

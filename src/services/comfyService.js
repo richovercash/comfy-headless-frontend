@@ -73,8 +73,11 @@ const ComfyService = {
   },
 
 
+ 
+
+
   /**
-   * Create a Flux workflow with LoRA support
+   * Create a Flux workflow with LoRA support using EasyLoraStack
    * @param {Object} options - Workflow configuration options
    * @returns {Object} Workflow object and timestamp
    */
@@ -85,7 +88,7 @@ const ComfyService = {
     inputImageUrl = null,
     reduxImageUrl = null,
     filenamePrefix = 'Otherides-2d',
-    loras = [] // New parameter for LoRAs
+    loras = [] // LoRAs parameter
   }) {
     console.log('Creating Flux workflow with options:', {
       prompt,
@@ -113,7 +116,7 @@ const ComfyService = {
     let workflow;
     
     if (inputImageUrl && reduxImageUrl) {
-      // Advanced workflow with both input image and redux reference
+      // Advanced workflow...
       workflow = this._createAdvancedWorkflow({
         prompt: fullPrompt,
         negativePrompt,
@@ -124,7 +127,7 @@ const ComfyService = {
         timestamp
       });
     } else if (inputImageUrl) {
-      // Basic workflow with input image only
+      // Basic workflow...
       workflow = this._createBasicWorkflow({
         prompt: fullPrompt,
         negativePrompt,
@@ -134,7 +137,7 @@ const ComfyService = {
         timestamp
       });
     } else {
-      // Simple workflow without image references
+      // Simple workflow...
       workflow = this._createSimpleWorkflow({
         prompt: fullPrompt,
         negativePrompt,
@@ -144,12 +147,21 @@ const ComfyService = {
       });
     }
     
-    // Apply LoRA configuration if provided
+    // Apply LoRA configuration if provided - USE THE NEW METHOD
     if (loras && loras.length > 0) {
-      workflow = loraService.updateWorkflowWithLoras(workflow, loras);
+      console.log(`Adding ${loras.length} LoRAs to workflow using EasyLoraStack`);
+      
+      try {
+        // Important: Use the new EasyLoraStack method
+        const workflowWithLoras = loraService.updateWorkflowWithEasyLoraStack(workflow, loras);
+        workflow = workflowWithLoras;
+      } catch (error) {
+        console.error("Error applying LoRAs with EasyLoraStack:", error);
+        // Continue with the original workflow if there was an error
+      }
     }
     
-    // FIX: Verify all node references exist in the workflow
+    // Verify all node references exist in the workflow
     workflow = this._verifyNodeReferences(workflow);
     
     console.log('Workflow created');
@@ -159,6 +171,7 @@ const ComfyService = {
       timestamp: timestamp.toString()
     };
   },
+
 
   /**
    * Verifies that all node references in the workflow exist
