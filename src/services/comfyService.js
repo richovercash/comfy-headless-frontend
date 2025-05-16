@@ -64,132 +64,134 @@ const ComfyService = {
     return await response.json();
   },
 
-  /**
- * Import LoRAs from ComfyUI into the database
- * This will fetch all LoRAs available in ComfyUI and add them to your database
- * @returns {Promise<Object>} Import results
- */
-async importAllLorasFromComfyUI() {
-  try {
-    console.log("Importing all LoRAs from ComfyUI to database...");
-    
-    // Get all LoRAs available in ComfyUI
-    const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
-    const response = await fetch(`${API_BASE_URL}/object_info`);
-    
-    if (!response.ok) {
-      throw new Error(`Failed to fetch data from ComfyUI API: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    const loraOptions = [];
-    
-    // First try with EasyLoraStack
-    if (data['easy loraStack']) {
-      const easyLoraStack = data['easy loraStack'];
+    /**
+   * Import LoRAs from ComfyUI into the database
+   * This will fetch all LoRAs available in ComfyUI and add them to your database
+   * @returns {Promise<Object>} Import results
+   */
+  async importAllLorasFromComfyUI() {
+    try {
+      console.log("Importing all LoRAs from ComfyUI to database...");
       
-      if (easyLoraStack.input?.optional) {
-        for (let i = 1; i <= 10; i++) {
-          const loraField = `lora_${i}_name`;
-          if (easyLoraStack.input.optional[loraField]) {
-            // Extract options from the array format
-            try {
-              const fieldData = easyLoraStack.input.optional[loraField];
-              
-              if (Array.isArray(fieldData) && fieldData.length > 1 && Array.isArray(fieldData[1])) {
-                fieldData[1].forEach(path => {
-                  if (path && path !== 'None') {
-                    loraOptions.push(path);
-                  }
-                });
+      // Get all LoRAs available in ComfyUI
+      const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localhost:8188';
+      const response = await fetch(`${API_BASE_URL}/object_info`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch data from ComfyUI API: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      const loraOptions = [];
+      
+      // First try with EasyLoraStack
+      if (data['easy loraStack']) {
+        const easyLoraStack = data['easy loraStack'];
+        
+        if (easyLoraStack.input?.optional) {
+          for (let i = 1; i <= 10; i++) {
+            const loraField = `lora_${i}_name`;
+            if (easyLoraStack.input.optional[loraField]) {
+              // Extract options from the array format
+              try {
+                const fieldData = easyLoraStack.input.optional[loraField];
+                
+                if (Array.isArray(fieldData) && fieldData.length > 1 && Array.isArray(fieldData[1])) {
+                  fieldData[1].forEach(path => {
+                    if (path && path !== 'None') {
+                      loraOptions.push(path);
+                    }
+                  });
+                }
+              } catch (err) {
+                console.warn(`Error parsing LoRA options from field ${loraField}:`, err);
               }
-            } catch (err) {
-              console.warn(`Error parsing LoRA options from field ${loraField}:`, err);
             }
           }
         }
       }
-    }
-    
-    // Try LoraLoader
-    if (data.LoraLoader?.input?.required?.lora_name?.options) {
-      const options = data.LoraLoader.input.required.lora_name.options;
-      Object.keys(options).forEach(path => {
-        if (path !== 'None') {
-          loraOptions.push(path);
-        }
-      });
-    }
-    
-    // Try FluxLoraLoader
-    if (data.FluxLoraLoader?.input?.required?.lora_name?.options) {
-      const options = data.FluxLoraLoader.input.required.lora_name.options;
-      Object.keys(options).forEach(path => {
-        if (path !== 'None') {
-          loraOptions.push(path);
-        }
-      });
-    }
-    
-    // Remove duplicates
-    const uniquePaths = [...new Set(loraOptions)];
-    console.log(`Found ${uniquePaths.length} unique LoRAs in ComfyUI`);
-    
-    // Format LoRAs for database
-    const lorasToInsert = uniquePaths.map(path => {
-      // Extract name from path
-      const name = path.split('/').pop().replace(/\.\w+$/, '');
-      const category = path.includes('/') ? path.split('/')[0] : 'Default';
       
-      return {
-        name: name,
-        file_path: path,
-        display_name: name.replace(/[-_]/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-        category: category,
-        // Leave activation_words and description blank for manual editing
-        activation_words: '',
-        description: ''
-      };
-    });
-    
-    // Upsert to database
-    if (lorasToInsert.length > 0) {
-      console.log(`Upserting ${lorasToInsert.length} LoRAs to database`);
-      const { data, error } = await supabase
-        .from('loras')
-        .upsert(lorasToInsert, { 
-          onConflict: 'file_path',
-          // Only update these fields if the row exists
-          ignoreDuplicates: false
-        })
-        .select();
-        
-      if (error) {
-        console.error("Error upserting LoRAs to database:", error);
-        throw error;
+      // Try LoraLoader
+      if (data.LoraLoader?.input?.required?.lora_name?.options) {
+        const options = data.LoraLoader.input.required.lora_name.options;
+        Object.keys(options).forEach(path => {
+          if (path !== 'None') {
+            loraOptions.push(path);
+          }
+        });
       }
       
-      return {
-        success: true,
-        message: `Successfully imported ${lorasToInsert.length} LoRAs from ComfyUI`,
-        imported: lorasToInsert.length,
-        loras: data
-      };
-    } else {
+      // Try FluxLoraLoader
+      if (data.FluxLoraLoader?.input?.required?.lora_name?.options) {
+        const options = data.FluxLoraLoader.input.required.lora_name.options;
+        Object.keys(options).forEach(path => {
+          if (path !== 'None') {
+            loraOptions.push(path);
+          }
+        });
+      }
+      
+      // Remove duplicates
+      const uniquePaths = [...new Set(loraOptions)];
+      console.log(`Found ${uniquePaths.length} unique LoRAs in ComfyUI`);
+      
+      // Format LoRAs for database
+      const lorasToInsert = uniquePaths.map(path => {
+        // Extract name from path
+        const name = path.split('/').pop().replace(/\.\w+$/, '');
+        const category = path.includes('/') ? path.split('/')[0] : 'Default';
+        
+        return {
+          name: name,
+          file_path: path,
+          display_name: name.replace(/[-_]/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          category: category,
+          // Leave activation_words and description blank for manual editing
+          activation_words: '',
+          description: ''
+        };
+      });
+      
+      // Upsert to database
+      if (lorasToInsert.length > 0) {
+        console.log(`Upserting ${lorasToInsert.length} LoRAs to database`);
+        const { data, error } = await supabase
+          .from('loras')
+          .upsert(lorasToInsert, { 
+            onConflict: 'file_path',
+            // Only update these fields if the row exists
+            ignoreDuplicates: false
+          })
+          .select();
+          
+        if (error) {
+          console.error("Error upserting LoRAs to database:", error);
+          throw error;
+        }
+        
+        return {
+          success: true,
+          message: `Successfully imported ${lorasToInsert.length} LoRAs from ComfyUI`,
+          imported: lorasToInsert.length,
+          loras: data
+        };
+      } else {
+        return {
+          success: false,
+          message: "No LoRAs found in ComfyUI",
+          imported: 0
+        };
+      }
+    } catch (error) {
+      console.error("Error importing LoRAs from ComfyUI:", error);
       return {
         success: false,
-        message: "No LoRAs found in ComfyUI",
-        imported: 0
+        error: error.message
       };
     }
-  } catch (error) {
-    console.error("Error importing LoRAs from ComfyUI:", error);
-    return {
-      success: false,
-      error: error.message
-    };
-  }
-}
+  },
+
+
 
  
   /**
