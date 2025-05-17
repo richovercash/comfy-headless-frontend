@@ -277,7 +277,7 @@ const LoraSelector = ({
                   <Slider
                     type="range"
                     min="0"
-                    max="2"
+                    max="3"
                     step="0.05"
                     value={lora.model_strength}
                     onChange={(e) => handleLoraChange(index, 'model_strength', parseFloat(e.target.value))}

@@ -15,9 +15,9 @@ export const API_BASE_URL = import.meta.env.VITE_COMFY_UI_API || 'http://localho
 
 const FluxGenerationForm = () => {
   const [values, setValues] = useState({
-    prompt: 'neon-mist, cpstyle, rock!, Gatling_mounted, madocalypse',
-    negativePrompt: 'low quality, bad anatomy, blurry, pixelated, distorted, deformed',
-    steps: 28,
+    prompt: '',
+    negativePrompt: '',
+    steps: 20,
     inputImage: null,
     reduxImage: null,
     reduxStrength: 0.5, // Default Redux influence strength
@@ -146,6 +146,8 @@ const FluxGenerationForm = () => {
       // console.log("LoRAs being sent to workflow:", loras.map(l => l.file_path));
 
       if (useAdvancedWorkflow) {
+        console.log("Using advanced workflow with LoRAs:", selectedLoras.length);
+
         workflowResult = ComfyService.createFluxAdvancedWorkflow({
           prompt: values.prompt,
           steps: values.steps,
@@ -155,6 +157,8 @@ const FluxGenerationForm = () => {
           loras: selectedLoras // This is the new line to add
         });
       } else {
+        console.log("Using simple workflow with LoRAs:", selectedLoras.length);
+
         workflowResult = ComfyService.createFluxWorkflow({
           prompt: values.prompt,
           steps: values.steps,
@@ -162,6 +166,20 @@ const FluxGenerationForm = () => {
           loras: selectedLoras // This is the new line to add
         });
       }
+      // Debug output to confirm LoRAs were added
+      const hasLoraStack = Object.values(workflowResult.workflow).some(node => 
+        node.class_type === "easy loraStack"
+      );
+
+      const hasFluxLoras = Object.values(workflowResult.workflow).some(node => 
+        node.class_type === "FluxLoraLoader"
+      );
+
+      console.log("Workflow LoRA status:", {
+        hasLoraStack,
+        hasFluxLoras,
+        nodeCount: Object.keys(workflowResult.workflow).length
+      });
       
 
             // In FluxGenerationForm.jsx, in the handleSubmit function
